@@ -78,7 +78,7 @@ private:
 public:
 	bool OnUserCreate() override
 	{
-		_engine = new BallCollisionEngine(ScreenWidth(), ScreenHeight(), 700);
+		_engine = new BallCollisionEngine(ScreenWidth(), ScreenHeight(), 300);
 		_engine->Create();
 		return true;
 	}
@@ -91,12 +91,17 @@ public:
 		// clear the screen
 		FillRect(0, 0, ScreenWidth(), ScreenHeight(), olc::Pixel(0, 0, 0));
 
+
+
 		// draw ball
 #pragma omp parallel for 
 		for (int i = 0; i < _engine->Balls.size(); i++) {
 			int r = std::min(sqrt(_engine->Balls[i].vx * _engine->Balls[i].vx + _engine->Balls[i].vy * _engine->Balls[i].vy) + 100.0f, 255.0f);
 			FillCircle(_engine->Balls[i].x, _engine->Balls[i].y, _engine->Balls[i].r, olc::Pixel(r, 255 - r, 255 - r));
 		}
+
+		//std::string text = "Peter";
+		//DrawString(_engine->Balls[0].x, _engine->Balls[0].y, text, olc::WHITE, 8);
 
 		// draw line
 		for (auto& line : _engine->Lines) {
@@ -122,6 +127,6 @@ public:
 
 void RunBallCollision() {
 	BallCollision ball_collision;
-	if (ball_collision.Construct(1536, 1024, 1, 1))
+	if (ball_collision.Construct(2048, 1200, 1, 1))
 		ball_collision.Start();
 }

@@ -5,6 +5,13 @@
 #include "objectStructure.h"
 
 
+enum Gravity {
+	Normal = 0,
+	Center = 1,
+	Bicenter = 2
+};
+
+
 class BallCollisionEngine {
 public:
 	BallCollisionEngine(int width, int height, int ballNum);
@@ -23,7 +30,7 @@ private:
 	int _screenHeight;
 	float _timeSplit;
 	float _minVelocity;
-	float _gravity;
+	Gravity _gravity;
 
 	inline bool _isCollision(float x1, float y1, float r1, float x2, float y2, float r2) {
 		return fabs((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) <= (r1 + r2) * (r1 + r2);

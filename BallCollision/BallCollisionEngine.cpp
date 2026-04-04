@@ -7,7 +7,7 @@ BallCollisionEngine::BallCollisionEngine(int width, int height, int ballNum) {
 	_ballNum = ballNum;
 	_timeSplit = 4.0f;
 	_minVelocity = 0.1f;
-	_gravity = 0.0f;
+	_gravity = Gravity::Center;
 }
 
 BallCollisionEngine::~BallCollisionEngine() {
@@ -19,15 +19,15 @@ BallCollisionEngine::~BallCollisionEngine() {
 
 
 void BallCollisionEngine::Create() {
-	//for (int i = 0; i < _ballNum; i++) {
-	//	_addBall(rand() % _screenWidth, rand() % _screenHeight, rand() % 12 + 5);
-	//}
-
-	for (int y = _screenHeight * 0.3f; y < _screenHeight * 0.7f; y += 14.0f) {
-		for (int x = _screenWidth * 0.3f; x < _screenWidth * 0.7f; x += 14.0f) {
-			_addBall(x, y, 7.0f);
-		}
+	for (int i = 0; i < _ballNum; i++) {
+		_addBall(rand() % _screenWidth, rand() % _screenHeight, rand() % 12 + 5);
 	}
+
+	//for (int y = _screenHeight * 0.2f; y < _screenHeight * 0.7f; y += 14.0f) {
+	//	for (int x = _screenWidth * 0.2f; x < _screenWidth * 0.7f; x += 14.0f) {
+	//		_addBall(x, y, 7.0f);
+	//	}
+	//}
 
 	//_addLine(30.0f, 30.0f, 30.0f, 920.0f, 4.0f);
 	//_addLine(1000.0f, 30.0f, 1000.0f, 920.0f, 4.0f);
@@ -58,9 +58,35 @@ void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
 			Balls[i].sx = Balls[i].x;
 			Balls[i].sy = Balls[i].y;
 
+			float dx, dy;
+
+			switch (_gravity)
+			{
+			case Normal:
+				dx = 0.0f;
+				dy = 300.0f;
+				break;
+			case Center:
+				dx = _screenWidth / 2 - Balls[i].x;
+				dy = _screenHeight / 2 - Balls[i].y;
+				break;
+			case Bicenter:
+				if (Balls[i].x < _screenWidth / 2) {
+					dx = _screenWidth * 0.25f - Balls[i].x;
+					dy = _screenHeight * 0.5f - Balls[i].y;
+				}
+				else {
+					dx = _screenWidth * 0.75f - Balls[i].x;
+					dy = _screenHeight * 0.5f - Balls[i].y;
+				}
+				break;
+			default:
+				break;
+			}
+
 			// Add Drag to emulate rolling friction
-			Balls[i].ax = -Balls[i].vx * 0.8f;
-			Balls[i].ay = -Balls[i].vy * 0.8f + _gravity;
+			Balls[i].ax = -Balls[i].vx * 0.8f + 1.2f * dx;
+			Balls[i].ay = -Balls[i].vy * 0.8f + 1.2f * dy;
 
 			// Update ball physics
 			Balls[i].vx += Balls[i].ax * Balls[i].remainingTime;
@@ -73,6 +99,10 @@ void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
 			if (Balls[i].x >= _screenWidth) Balls[i].x -= (float)_screenWidth;
 			if (Balls[i].y < 0) Balls[i].y += (float)_screenHeight;
 			if (Balls[i].y >= _screenHeight) Balls[i].y -= (float)_screenHeight;
+			//if (Balls[i].x < 0) { Balls[i].vx *= -1.0f; Balls[i].ax *= -1.0f; }
+			//if (Balls[i].x >= _screenWidth) { Balls[i].vx *= -1.0f; Balls[i].ax *= -1.0f; }
+			//if (Balls[i].y < 0) { Balls[i].vy *= -1.0f; Balls[i].ay *= -1.0f; }
+			//if (Balls[i].y >= _screenHeight) { Balls[i].vy *= -1.0f; Balls[i].ay *= -1.0f; }
 
 			// Clamp velocity near zero
 			if (fabs(Balls[i].vx * Balls[i].vx + Balls[i].vy * Balls[i].vy) < _minVelocity)
