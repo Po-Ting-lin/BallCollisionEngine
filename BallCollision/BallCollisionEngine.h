@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <vector>
 #include <omp.h>
 #include "utils.h"
@@ -33,7 +34,7 @@ private:
 	Gravity _gravity;
 
 	inline bool _isCollision(float x1, float y1, float r1, float x2, float y2, float r2) {
-		return fabs((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) <= (r1 + r2) * (r1 + r2);
+		return std::fabs((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) <= (r1 + r2) * (r1 + r2);
 	}
 	inline void _addBall(float x, float y, float radius) {
 		Ball ball;

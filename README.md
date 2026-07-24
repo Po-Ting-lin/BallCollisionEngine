@@ -1,73 +1,90 @@
-<p align="center">
-  <a href="https://discord.gg/WhwHUMV"> <img src="https://img.shields.io/discord/380484403458998276?logo=discord"> </a>
-</p>
+# Ball Collision Engine
 
-# olcPixelGameEngine
-The official distribution of olcPixelGameEngine, a tool used in javidx9's YouTube videos and projects.
+A 2D ball-collision visualizer built with C++17 and
+[olcPixelGameEngine](BallCollision/olcPixelGameEngine.h).
 
-**You only need the one file - olcPixelGameEngine.h - included in your project!**
+The physics implementation is documented in [algo.md](algo.md).
 
-Provides a fast, richly featured, cross platform pixel drawing and user interface framework for
- * The development of games
- * Visualisation of algorithms
- * Prototyping and experimentation
- * Education
+## Requirements
 
-olcPixelGameEngine is easily extended! for example:
- * 2D Affine transforms
- * 3D Software renderer
- * Controller input
- * Sound
- * Hardware interfaces
- 
-olcPixelGameEngine is easy to port! Runs on:
- * Windows (all)
- * Linux / Raspberry Pi / ChromeOS
- * MacOS (coming soon to official, but already available in "Contributors")
- * PSP & Switch (Not supported by OneLoneCoder)
- 
-olcPixelGameEngine has been reimplemented in other languages!
- * C#
- * Rust
- * Lua
- * Java
-  
-olcPixelGameEngine is actively maintained and developed!
+The PowerShell build uses a MinGW-w64 toolchain and does not require a Visual
+Studio solution or MSBuild.
 
-olcPixelGameEngine is used by 100s, if not 1000s of programmers at all levels of ability!
+Install these tools and make sure they are available on `PATH`:
 
+- CMake 3.15 or newer
+- MinGW-w64 with GCC 9 or newer and `g++.exe`
+- `mingw32-make.exe`
 
-# Documentation
-Please see https://github.com/OneLoneCoder/olcPixelGameEngine/wiki
+The compiler must include OpenMP support.
 
-# License (OLC-3)
+If multiple MinGW-w64 installations are on `PATH`, the script selects the
+compiler with the highest reported GCC version.
 
-Copyright 2018, 2019, 2020, 2021 OneLoneCoder.com
+## Build
 
-Redistribution and use in source and binary forms, with or without 
-modification, are permitted provided that the following conditions 
-are met:
+From PowerShell in the repository root:
 
-1. Redistributions or derivations of source code must retain the above 
-   copyright notice, this list of conditions and the following disclaimer.
+```powershell
+.\build.ps1
+```
 
-2. Redistributions or derivative works in binary form must reproduce 
-   the above copyright notice. This list of conditions and the following 
-   disclaimer must be reproduced in the documentation and/or other 
-   materials provided with the distribution.
+The default configuration is `Release`. The executable is written to:
 
-3. Neither the name of the copyright holder nor the names of its 
-   contributors may be used to endorse or promote products derived 
-   from this software without specific prior written permission.
-    
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR 
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT 
-HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT 
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```text
+build/bin/BallCollision.exe
+```
+
+Build and launch the program:
+
+```powershell
+.\build.ps1 -Run
+```
+
+Create a debug build:
+
+```powershell
+.\build.ps1 -Configuration Debug
+```
+
+Delete the existing CMake build directory before building:
+
+```powershell
+.\build.ps1 -Clean
+```
+
+Options can be combined:
+
+```powershell
+.\build.ps1 -Configuration Debug -Clean -Run
+```
+
+Select a specific MinGW-w64 installation:
+
+```powershell
+.\build.ps1 -ToolchainDirectory C:\msys64\mingw64\bin -Clean
+```
+
+## Manual CMake Build
+
+The script runs the equivalent of:
+
+```powershell
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The root `CMakeLists.txt` also contains the required Windows system libraries,
+OpenMP configuration, and Linux dependencies.
+
+## Controls
+
+- Hold the left mouse button on a ball to drag it.
+- Press and release the right mouse button on a ball to launch it away from the
+  mouse cursor.
+
+## Third-Party Component
+
+The repository includes olcPixelGameEngine by OneLoneCoder. Its license and
+documentation are contained in
+[`BallCollision/olcPixelGameEngine.h`](BallCollision/olcPixelGameEngine.h).

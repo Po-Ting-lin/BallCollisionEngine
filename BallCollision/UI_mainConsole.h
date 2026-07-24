@@ -7,8 +7,16 @@
 class BallCollision : public olc::PixelGameEngine
 {
 public:
-	BallCollision() { 
+	BallCollision()
+		: _engine(nullptr),
+		  _selectedBall(nullptr),
+		  _selectedLine(nullptr),
+		  _isStartLine(false) {
 		sAppName = "BallCollision";
+	}
+
+	~BallCollision() override {
+		delete _engine;
 	}
 private:
 	BallCollisionEngine* _engine;
@@ -94,8 +102,8 @@ public:
 
 
 		// draw ball
-#pragma omp parallel for 
-		for (int i = 0; i < _engine->Balls.size(); i++) {
+		const int ballCount = static_cast<int>(_engine->Balls.size());
+		for (int i = 0; i < ballCount; i++) {
 			int r = std::min(sqrt(_engine->Balls[i].vx * _engine->Balls[i].vx + _engine->Balls[i].vy * _engine->Balls[i].vy) + 100.0f, 255.0f);
 			FillCircle(_engine->Balls[i].x, _engine->Balls[i].y, _engine->Balls[i].r, olc::Pixel(r, 255 - r, 255 - r));
 		}

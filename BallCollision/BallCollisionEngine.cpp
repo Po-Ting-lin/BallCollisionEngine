@@ -1,5 +1,9 @@
 #include "BallCollisionEngine.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+
 
 BallCollisionEngine::BallCollisionEngine(int width, int height, int ballNum) {
 	_screenHeight = height;
@@ -50,15 +54,17 @@ void BallCollisionEngine::Update(float& fElapsedTime) {
 }
 
 void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
+	const int ballCount = static_cast<int>(Balls.size());
 #pragma omp parallel for
-	for (int i = 0; i < Balls.size(); i++)
+	for (int i = 0; i < ballCount; i++)
 	{
 		if (Balls[i].remainingTime > 0) {
 			// start position
 			Balls[i].sx = Balls[i].x;
 			Balls[i].sy = Balls[i].y;
 
-			float dx, dy;
+			float dx = 0.0f;
+			float dy = 0.0f;
 
 			switch (_gravity)
 			{
@@ -105,7 +111,7 @@ void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
 			//if (Balls[i].y >= _screenHeight) { Balls[i].vy *= -1.0f; Balls[i].ay *= -1.0f; }
 
 			// Clamp velocity near zero
-			if (fabs(Balls[i].vx * Balls[i].vx + Balls[i].vy * Balls[i].vy) < _minVelocity)
+			if (std::fabs(Balls[i].vx * Balls[i].vx + Balls[i].vy * Balls[i].vy) < _minVelocity)
 			{
 				Balls[i].vx = 0;
 				Balls[i].vy = 0;
@@ -132,7 +138,7 @@ void BallCollisionEngine::_staticCollision() {
 			float t = std::max(0.0f, std::min(length, (line_vector_x * line_vector_sx + line_vector_y * line_vector_sy))) / length;
 			float closest_x = line.sx + t * line_vector_x;
 			float closest_y = line.sy + t * line_vector_y;
-			float distance = sqrtf((ball.x - closest_x) * (ball.x - closest_x) + (ball.y - closest_y) * (ball.y - closest_y));
+			float distance = std::sqrt((ball.x - closest_x) * (ball.x - closest_x) + (ball.y - closest_y) * (ball.y - closest_y));
 
 			if (distance <= (ball.r + line.r))
 			{
@@ -164,7 +170,7 @@ void BallCollisionEngine::_staticCollision() {
 					_collisionList.push_back({ &ball, &target });
 
 					// Distance between ball centers
-					float fDistance = sqrtf((ball.x - target.x) * (ball.x - target.x) + (ball.y - target.y) * (ball.y - target.y));
+					float fDistance = std::sqrt((ball.x - target.x) * (ball.x - target.x) + (ball.y - target.y) * (ball.y - target.y));
 
 					// Calculate displacement required
 					float fOverlap = 0.5f * (fDistance - ball.r - target.r);
@@ -179,9 +185,8 @@ void BallCollisionEngine::_staticCollision() {
 				}
 			}
 		}
-		float fIntendedSpeed = sqrtf(ball.vx * ball.vx + ball.vy * ball.vy);
-		float fIntendedDistance = fIntendedSpeed * ball.remainingTime;
-		float fActualDistance = sqrtf((ball.x - ball.sx) * (ball.x - ball.sx) + (ball.y - ball.sy) * (ball.y - ball.sy));
+		float fIntendedSpeed = std::sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+		float fActualDistance = std::sqrt((ball.x - ball.sx) * (ball.x - ball.sx) + (ball.y - ball.sy) * (ball.y - ball.sy));
 		float fActualTime = fActualDistance / fIntendedSpeed;
 		ball.remainingTime -= fActualTime;
 	}
@@ -197,7 +202,7 @@ void BallCollisionEngine::_dynamicCollision() {
 		float diff_x = b1->x - b2->x;
 		float diff_y = b1->y - b2->y;
 
-		float fDistance = sqrtf(diff_x * diff_x + diff_y * diff_y);
+		float fDistance = std::sqrt(diff_x * diff_x + diff_y * diff_y);
 
 		// Normal
 		float nx = diff_x / fDistance;
