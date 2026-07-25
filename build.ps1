@@ -7,6 +7,10 @@ param(
 
     [switch]$Clean,
 
+    [switch]$Benchmark,
+
+    [switch]$Test,
+
     [switch]$Run
 )
 
@@ -123,6 +127,28 @@ Invoke-CMake -Arguments @(
 
 $executable = Join-Path -Path $buildDirectory -ChildPath "bin/BallCollision.exe"
 Write-Host "Build complete: $executable"
+
+if ($Test) {
+    Invoke-CMake -Arguments @(
+        "--build", $buildDirectory,
+        "--target", "test"
+    )
+}
+
+if ($Benchmark) {
+    $benchmarkExecutable = Join-Path `
+        -Path $buildDirectory `
+        -ChildPath "bin/BallCollisionBenchmark.exe"
+
+    if (-not (Test-Path -LiteralPath $benchmarkExecutable -PathType Leaf)) {
+        throw "The benchmark executable was not created: $benchmarkExecutable"
+    }
+
+    & $benchmarkExecutable
+    if ($LASTEXITCODE -ne 0) {
+        throw "BallCollisionBenchmark exited with code $LASTEXITCODE."
+    }
+}
 
 if ($Run) {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {

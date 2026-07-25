@@ -46,14 +46,29 @@ would normally be proportional to `r^2`.
 
 ## Initialization
 
-`BallCollisionEngine::Create` creates the requested number of balls. The
-default UI creates 300 balls.
+`BallCollisionEngine::Create` creates the number of balls requested by
+`num_balls` in `config.ini`.
 
 Each ball begins with:
 
 - An integer-coordinate position selected with `rand()`
-- A radius from 5 through 16
+- An integer radius selected from the inclusive `ball_radius_min` through
+  `ball_radius_max` configuration range
 - Zero velocity and acceleration
+
+`pattern_mode` selects the initial position distribution:
+
+- `random`: positions across the complete screen, preserving the original
+  behavior.
+- `circle_cluster`: a centered circular formation selected from the nearest
+  points of a hexagonal close-packed lattice.
+- `rectangle_cluster`: centered tangent rows arranged into a rectangle matching
+  the screen aspect ratio.
+
+Both cluster modes set every ball radius to `ball_radius_min` and place adjacent
+centers exactly `2 * ball_radius_min` apart. If the requested packed formation
+cannot fit on screen, startup reports a configuration error instead of placing
+balls outside the simulation area.
 
 No random seed is set, so the initial sequence is normally repeatable between
 program launches using the same C runtime.
@@ -78,15 +93,29 @@ ball between two checks.
 
 ## Acceleration Model
 
-The default gravity mode is `Center`. It behaves like a damped spring rather
-than physical gravity:
+The gravity mode is selected with `gravity` in `config.ini`.
+`gravity_strength` controls the acceleration multiplier and defaults to `1.2`.
+Four modes exist. The modes other than `None` use velocity damping and, for the
+attraction modes, behave like damped springs rather than physical gravity:
+
+At runtime, pressing `G` cycles through `None`, `Normal`, `Center`, and
+`Bicenter`, then returns to `None`.
 
 ```text
 target_delta = gravity_target - position
-acceleration = -0.8 * velocity + 1.2 * target_delta
+acceleration = -velocity_drag * velocity
+             + gravity_strength * target_delta
 ```
 
-Three target modes exist:
+### None
+
+```text
+acceleration = (0, 0)
+```
+
+This mode disables gravitational acceleration. Set `velocity_drag = 0` as well
+for space-like motion where a ball retains its velocity until it collides with
+another ball or a boundary.
 
 ### Normal
 
@@ -94,8 +123,8 @@ Three target modes exist:
 target_delta = (0, 300)
 ```
 
-This produces a constant downward acceleration of `1.2 * 300 = 360`, together
-with velocity damping.
+With the default strength, this produces a constant downward acceleration of
+`1.2 * 300 = 360`, together with velocity damping.
 
 ### Center
 
@@ -154,7 +183,26 @@ if vx^2 + vy^2 < 0.1:
 
 ## Ball-Ball Collision Detection
 
-Every ball is compared with every other ball. Two balls overlap when:
+The engine rebuilds a uniform grid after integration in every substep. Grid
+cell size is set to the largest current ball diameter. Each ball is inserted
+into the cell containing its center.
+
+The grid uses packed flat arrays. Rebuilding it resets counters only for cells
+that were active in the previous substep, counts the new occupants, and packs
+ball indices into one contiguous array. Collision traversal iterates only the
+active-cell list, so empty cells are neither cleared nor scanned.
+
+Pairs are tested within the same cell and across four forward neighbors:
+
+```text
+right, bottom-left, bottom, bottom-right
+```
+
+This covers all eight neighboring directions while emitting each candidate
+pair only once. Cell size is at least the maximum collision diameter, so an
+overlapping pair cannot be separated by more than one cell on either axis.
+
+Candidate balls overlap when:
 
 ```text
 (x1 - x2)^2 + (y1 - y2)^2 <= (r1 + r2)^2
@@ -162,8 +210,7 @@ Every ball is compared with every other ball. Two balls overlap when:
 
 The squared form avoids a square root for non-colliding pairs.
 
-There is no broad-phase acceleration structure such as a uniform grid,
-quadtree, sweep-and-prune, or bounding-volume hierarchy.
+The grid is the broad phase; the squared circle test is the narrow phase.
 
 ## Positional Correction
 
@@ -185,9 +232,9 @@ position2 -= 0.5 * penetration * normal
 This prevents balls from remaining visibly embedded before the velocity
 response is calculated.
 
-In the current implementation, the second correction uses the already-updated
-first position. This makes the result asymmetric, slightly over-separates the
-balls, and causes the result to depend on traversal order.
+The correction uses one contact normal and moves both balls symmetrically.
+Coincident centers use a deterministic horizontal normal to avoid division by
+zero.
 
 ## Dynamic Collision Response
 
@@ -218,9 +265,8 @@ elastic bodies:
 - Tangential velocity is unchanged.
 - There is no rotational motion or contact friction.
 
-The implementation does not check whether the relative normal velocity shows
-that the balls are approaching. Consequently, an overlap between separating
-balls can receive another impulse.
+The impulse is applied only when relative normal velocity shows that the
+bodies are approaching.
 
 ## Line Collision Model
 
@@ -246,34 +292,22 @@ velocity = -ball.velocity
 
 Line creation is commented out in the default scene.
 
-The current line-response implementation stores a pointer to a local fake-ball
-variable and later dereferences it during dynamic collision resolution. That
-pointer is already invalid, so enabling line collisions invokes undefined
-behavior.
+Temporary fake balls use stable `std::deque` storage until impulse resolution.
+Zero-length lines are ignored, and a ball centered exactly on its closest line
+point receives a perpendicular fallback normal.
 
 ## Collision-Pair Traversal
 
-Ball pairs are visited as ordered pairs:
+Pairs in the same grid cell use:
 
 ```text
-for each ball:
-    for each target:
-        if ball.id != target.id:
-            test(ball, target)
+for i in [0, cell_size):
+    for j in [i + 1, cell_size):
+        test(cell[i], cell[j])
 ```
 
-This visits both `(A, B)` and `(B, A)`. Positional over-correction often prevents
-the reverse pair from being recorded, but this is incidental. Exact contact or
-multi-ball interactions can still produce duplicate or order-dependent
-responses.
-
-A conventional implementation would iterate only unique pairs:
-
-```text
-for i in [0, ball_count):
-    for j in [i + 1, ball_count):
-        test(ball[i], ball[j])
-```
+Pairs across the four selected neighbor directions use the Cartesian product
+of the two cell buckets. No pair is intentionally emitted twice.
 
 ## Remaining-Time Calculation
 
@@ -291,8 +325,7 @@ However, the engine does not perform another integration or collision pass
 using this remaining time. The value is reset at the next substep, so this is
 currently an incomplete continuous-collision mechanism.
 
-The division is also undefined when `intended_speed` is zero, although the
-result is normally discarded before it affects the next substep.
+Zero intended speed is guarded and sets remaining time to zero.
 
 ## User Interaction
 
@@ -309,17 +342,13 @@ become red.
 
 ## Parallelism
 
-OpenMP is used for:
+OpenMP is used for per-ball acceleration and position integration only when
+there are at least 4,096 balls. Below that threshold, the loop runs serially
+because measured OpenMP dispatch and barrier overhead exceeds the integration
+work.
 
-- Per-ball acceleration and position integration
-- Per-ball rendering
-
-The integration loop is independent per ball and is safe under the current
-design.
-
-Rendering is not safely parallelized. `FillCircle` writes directly into the
-shared olcPixelGameEngine pixel buffer, so overlapping circles can cause
-unsynchronized writes to the same pixels.
+Rendering is sequential because `FillCircle` writes into a shared
+olcPixelGameEngine pixel buffer.
 
 Collision detection and response are sequential.
 
@@ -329,6 +358,8 @@ Let:
 
 - `N` be the number of balls
 - `L` be the number of line segments
+- `G` be the number of grid cells
+- `P` be the number of grid-generated candidate pairs
 - `C` be the number of recorded collisions
 - `S` be the number of substeps, currently 4
 
@@ -336,39 +367,37 @@ The cost per frame is:
 
 ```text
 Integration:             O(S * N)
-Ball-ball detection:     O(S * N^2)
+Grid rebuild:            O(S * (N + G))
+Ball-ball detection:     O(S * P)
 Ball-line detection:     O(S * N * L)
 Dynamic response:        O(S * C)
 ```
 
-Overall:
+Typical overall cost:
 
 ```text
-O(S * (N^2 + N * L + C))
+O(S * (N + G + P + N * L + C))
 ```
 
-With 300 balls and four substeps, the engine performs 358,800 non-self
-ball-pair tests per rendered frame. At 60 frames per second, that is about 21.5
-million tests per second before rendering and collision response are counted.
+For a reasonably even distribution with bounded local density, `P` grows near
+linearly with `N`. The worst case remains `O(N^2)` if most balls occupy one cell
+or its immediate neighbors.
 
-The collision list reserves `N^2` entries, so its reserved memory is also
-quadratic.
+Grid storage is `O(N + G)`. The collision list initially reserves `8 * N`
+entries and grows only if actual contacts require more.
+
+Measured before/after results are recorded in [throughput.md](throughput.md).
 
 ## Important Edge Cases
 
-The current implementation does not safely handle:
+Important remaining limitations are:
 
-- Two balls with exactly the same center, because normalization divides by
-  zero.
-- A ball centered exactly on its line contact point.
-- A zero-length line segment.
 - Fast objects that cross without overlapping at the end of a substep.
-- Duplicate collision pairs.
-- Collision impulses applied to separating objects.
 - More than one screen width or height of movement in a substep.
 - Collisions across screen-wrap seams.
-- Valid lifetime management for fake line-collision balls.
 - Stable iterative resolution of dense piles or multi-ball contacts.
+- Contacts created by positional correction after the grid is built may wait
+  until the next substep.
 
 ## Algorithm Classification
 
@@ -377,13 +406,13 @@ The engine can be summarized as:
 ```text
 Discrete-time
 + semi-implicit Euler integration
-+ brute-force all-pairs overlap detection
++ uniform-grid broad phase
++ unique local-pair overlap detection
 + positional depenetration
 + frictionless elastic normal impulses
 + fixed-count temporal substeps
 ```
 
-It is suitable as a compact visual demonstration. For a larger or more robust
-physics engine, the main improvements would be unique-pair traversal, guarded
-normalization, approach-only impulses, stable collider ownership, an iterative
-contact solver, and a spatial broad phase such as a uniform grid.
+It is suitable as a compact visual demonstration. A more robust physics engine
+would add swept collision detection, an iterative contact solver, consistent
+toroidal or bounded-edge semantics, and rotational/frictional response.

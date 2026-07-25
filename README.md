@@ -65,6 +65,66 @@ Select a specific MinGW-w64 installation:
 .\build.ps1 -ToolchainDirectory C:\msys64\mingw64\bin -Clean
 ```
 
+Run the headless physics throughput benchmark:
+
+```powershell
+.\build.ps1 -Benchmark
+```
+
+Build and run the automated physics tests:
+
+```powershell
+.\build.ps1 -Test
+```
+
+Benchmark methodology and recorded results are documented in
+[`throughput.md`](throughput.md).
+
+## Runtime Configuration
+
+Edit [`config.ini`](config.ini) to change the initial scene without recompiling:
+
+```ini
+ball_radius_min = 2
+ball_radius_max = 5
+pattern_mode = random
+right_drag_launch_speed = 60.0
+gravity = none
+gravity_strength = 1.2
+velocity_drag = 0.8
+num_balls = 3000
+```
+
+Radius bounds are inclusive. Set `ball_radius_min` and `ball_radius_max` to the
+same value for fixed-size balls. Launch speed multiplies the distance between
+the selected ball and the mouse cursor when the right button is released.
+`pattern_mode` accepts `random`, `circle_cluster`, or `rectangle_cluster`.
+`circle_cluster` uses centered hexagonal close packing, while
+`rectangle_cluster` uses centered tangent rows. Both cluster modes give every
+ball the `ball_radius_min` radius; `ball_radius_max` applies only to `random`.
+Gravity accepts `none`, `normal`, `center`, or `bicenter`; values are
+case-insensitive and selects the initial mode. `gravity_strength` scales the
+acceleration of the other three modes; `0` disables their gravitational force,
+while `1.2` preserves the original behavior. `velocity_drag` controls velocity
+damping independently of gravity. Set it to `0` for space-like coasting.
+
+The build copies the configuration file beside the executable. Running through
+`.\build.ps1 -Run` reads the root copy shown above.
+
+## Full-Frame Profiler
+
+The top-left overlay reports smoothed frame time and these CPU phases:
+
+- Physics simulation
+- Full-screen clear
+- Ball rasterization
+- Lines and UI drawing
+- `Present+`, the remaining frame time after the four measured phases
+
+`Present+` includes pixel-engine input handling, framebuffer upload, OpenGL
+presentation, and other small frame-loop costs. Measurements are smoothed for
+readability.
+
 ## Manual CMake Build
 
 The script runs the equivalent of:
@@ -79,6 +139,8 @@ OpenMP configuration, and Linux dependencies.
 
 ## Controls
 
+- Press `Esc` to exit the simulation.
+- Press `G` to cycle `none → normal → center → bicenter → none`.
 - Hold the left mouse button on a ball to drag it.
 - Press and release the right mouse button on a ball to launch it away from the
   mouse cursor.
