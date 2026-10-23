@@ -17,6 +17,10 @@ struct AppConfig {
 	float mouseForceRadius = 200.0f;
 	float wallRadius = 4.0f;
 	SpawnPattern spawnPattern = SpawnPattern::Random;
+
+	// Set from the command line, not from config.ini.
+	bool frameBenchmark = false;
+	std::filesystem::path frameBenchmarkOutput;
 };
 
 AppConfig LoadAppConfig(const std::filesystem::path& path);

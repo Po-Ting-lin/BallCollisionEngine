@@ -11,11 +11,18 @@ param(
 
     [switch]$Test,
 
+    [switch]$FrameBenchmark,
+
     [switch]$Run
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($FrameBenchmark -and $Configuration -ne "Release") {
+    Write-Warning "-FrameBenchmark measures the Release build; ignoring -Configuration $Configuration."
+    $Configuration = "Release"
+}
 
 $repoRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $buildDirectory = [System.IO.Path]::GetFullPath(
@@ -148,6 +155,29 @@ if ($Benchmark) {
     if ($LASTEXITCODE -ne 0) {
         throw "BallCollisionBenchmark exited with code $LASTEXITCODE."
     }
+}
+
+if ($FrameBenchmark) {
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "The expected executable was not created: $executable"
+    }
+
+    $frameBenchmarkCsv = Join-Path -Path $buildDirectory -ChildPath "frame_benchmark.csv"
+    if (Test-Path -LiteralPath $frameBenchmarkCsv) {
+        Remove-Item -LiteralPath $frameBenchmarkCsv
+    }
+
+    Push-Location $repoRoot
+    try {
+        & $executable --frame-benchmark $frameBenchmarkCsv
+        if ($LASTEXITCODE -ne 0) {
+            throw "BallCollision frame benchmark exited with code $LASTEXITCODE."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    Write-Host "Frame benchmark CSV: $frameBenchmarkCsv"
 }
 
 if ($Run) {

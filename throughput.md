@@ -331,6 +331,73 @@ function. Both the screen clear and per-pixel circle rasterization are gone
 from the CPU. Measure the result with the in-app profiler: `Balls` is the
 vertex-array build and the GPU work appears in `Present+`.
 
+## Full-Frame Benchmark
+
+`BallCollisionBenchmark` times physics only. The full-frame benchmark runs the
+real application, window and OpenGL renderer included:
+
+```powershell
+.\build.ps1 -FrameBenchmark
+```
+
+### Method
+
+- `BallCollision.exe --frame-benchmark [output.csv]` plays a fixed scene list
+  in one 1920x1080 full-screen window. The engine is recreated for each scene,
+  and `srand` is seeded per scene, so the random layouts repeat.
+- Scenes: 2,000, 8,000, and 20,000 balls with radii 2-3, `random` pattern,
+  `center` gravity (strength 1.2, drag 0.8); then the scene from `config.ini`.
+- Each scene runs 60 warm-up frames, then 600 measured frames.
+- The simulation always advances by 1/60 s per frame, independent of the real
+  frame time, so every run simulates the same states.
+- Mouse and keyboard input are ignored, except `Esc` to abort.
+- V-sync is off (`Construct` is called without the `vsync` argument).
+- Per frame it records:
+  - `Physics`: `BallCollisionEngine::Update`.
+  - `Balls`: building the ball vertex array.
+  - `UI`: wall geometry, helper lines, and the HUD texture update.
+  - `Render (GPU)`: the layer-0 render function, ending in `glFinish()`, so it
+    covers draw submission plus GPU execution.
+  - `Present+`: the frame time left after the four phases above (buffer swap,
+    window events, and pixel-engine overhead).
+  - `Frame`: the pixel engine's `fElapsedTime` for that frame.
+- For each phase it reports average, median, P95, P99 (nearest rank), and
+  maximum, plus average FPS (1 / average frame time).
+
+`glFinish()` stalls the CPU until the GPU is idle, so CPU and GPU never
+overlap in this mode. That makes the phase split readable, but the FPS is a
+little lower than the overlapped interactive loop could reach.
+
+### Results
+
+Measured 2026-10-23 on the machine in [Test Environment](#test-environment)
+(Ryzen 5 3500X), NVIDIA GeForce RTX 3070 Ti (driver 32.0.15.6094),
+WinLibs MinGW-w64 GCC 16.2.0 UCRT, Release, statically linked runtime.
+`config.ini` at the time: 8,000 balls, radii 2-3, `rectangle_cluster`,
+gravity `none`, drag 0.6.
+
+| Scene | Balls | Avg FPS | Frame avg ms | Frame p99 ms | Physics avg ms | Balls avg ms | UI avg ms | Render (GPU) avg ms | Render p99 ms | Present+ avg ms |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| random 2k center | 2,000 | 1144.5 | 0.874 | 1.197 | 0.559 | 0.060 | 0.054 | 0.167 | 0.302 | 0.033 |
+| random 8k center | 8,000 | 252.9 | 3.954 | 5.229 | 3.275 | 0.245 | 0.058 | 0.355 | 0.494 | 0.021 |
+| random 20k center | 20,000 | 71.0 | 14.084 | 17.186 | 11.417 | 0.663 | 0.073 | 1.873 | 2.278 | 0.058 |
+| config.ini | 8,000 | 329.6 | 3.034 | 5.205 | 1.968 | 0.242 | 0.052 | 0.745 | 2.593 | 0.028 |
+
+Two later runs of the same build were up to 15% slower in the first three
+scenes. The `config.ini` scene varied more: 244 and 220 FPS, and in one run
+`Render (GPU)` averaged 1.45 ms.
+
+Observations:
+
+- Physics dominates every scene: 64-83% of the frame. At 20,000 balls it alone
+  takes 11.4 ms, so the frame budget is set by the CPU solver, not rendering.
+- GPU rendering stays under 2 ms even at 20,000 balls. Building the vertex
+  array costs about 0.033 us per ball.
+- `Present+` is under 0.1 ms on average once GPU time is separated. In the
+  interactive HUD, `Present+` also includes this GPU time.
+- The 20,000-ball scene holds 60 FPS on average, but its P99 frame time
+  (17.2 ms) misses a 60 Hz budget.
+
 ## Next Optimization Priorities
 
 1. Record the interactive full-frame profiler values for physics, ball drawing,
@@ -349,5 +416,6 @@ vertex-array build and the GPU work appears in `Present+`.
 - Before/after physics behavior is not bit-identical because the optimized
   solver uses unique pairs and approach-only impulses.
 - The line-collision path is fixed but not included in throughput scenes.
-- Rendering and presentation remain outside this benchmark.
+- Rendering and presentation remain outside the physics benchmark; see
+  [Full-Frame Benchmark](#full-frame-benchmark).
 - Timing calls add a small fixed overhead to instrumented updates.

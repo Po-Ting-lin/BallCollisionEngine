@@ -71,6 +71,20 @@ Run the headless physics throughput benchmark:
 .\build.ps1 -Benchmark
 ```
 
+Run the full-frame benchmark of the real application, including GPU rendering:
+
+```powershell
+.\build.ps1 -FrameBenchmark
+```
+
+This builds Release and runs `BallCollision.exe --frame-benchmark
+build\frame_benchmark.csv`. The app opens its normal window and plays four
+fixed scenes back to back (2,000 / 8,000 / 20,000 random balls with center
+gravity, then the `config.ini` scene) with a fixed 1/60 s simulation step and
+input disabled. It prints a Markdown table per scene to the console, writes one
+CSV row per scene, and exits by itself. The executable can also be run
+directly: `BallCollision.exe --frame-benchmark [output.csv]`.
+
 Build and run the automated physics tests:
 
 ```powershell
@@ -134,7 +148,9 @@ Everything is drawn on the GPU. A custom render function on layer 0 sends all
 balls and walls to OpenGL as one batch of textured quads, so the 1920x1080 CPU
 framebuffer is no longer uploaded every frame. `Present+` therefore covers
 pixel-engine input handling, the OpenGL draw calls, buffer presentation, and
-other small frame-loop costs.
+other small frame-loop costs. The frame benchmark (`-FrameBenchmark`) splits
+the GPU draw time out of `Present+` by calling `glFinish()` at the end of the
+render function and timing it.
 
 ## Manual CMake Build
 

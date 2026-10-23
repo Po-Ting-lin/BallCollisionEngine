@@ -3,6 +3,8 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 int main(int argc, char* argv[])
 {
@@ -14,7 +16,25 @@ int main(int argc, char* argv[])
 				/ "config.ini";
 		}
 
-		RunBallCollision(LoadAppConfig(configPath));
+		AppConfig config = LoadAppConfig(configPath);
+		for (int index = 1; index < argc; ++index) {
+			const std::string argument = argv[index];
+			if (argument == "--frame-benchmark") {
+				config.frameBenchmark = true;
+				if (index + 1 < argc
+					&& std::string(argv[index + 1]).rfind("--", 0) != 0) {
+					config.frameBenchmarkOutput = argv[++index];
+				}
+			}
+			else {
+				throw std::runtime_error(
+					"Unknown argument '" + argument
+						+ "'. Usage: BallCollision [--frame-benchmark [output.csv]]"
+				);
+			}
+		}
+
+		RunBallCollision(config);
 		return 0;
 	}
 	catch (const std::exception& error) {

@@ -4,10 +4,15 @@
 #include "AppConfig.h"
 #include "BallCollisionEngine.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <memory>
 #include <sstream>
+#include <string>
 #include <vector>
 
 class BallCollision : public olc::PixelGameEngine
@@ -154,6 +159,294 @@ private:
 	static constexpr int HudX = 6;
 	static constexpr int HudY = 6;
 
+	// --frame-benchmark runs these scenes back to back with a fixed
+	// simulation step and records every phase of every frame.
+	struct FrameBenchmarkScene {
+		std::string name;
+		int numBalls;
+		int minimumBallRadius;
+		int maximumBallRadius;
+		SpawnPattern spawnPattern;
+		Gravity gravity;
+		float gravityStrength;
+		float velocityDrag;
+	};
+
+	struct FrameSample {
+		double physicsSeconds = 0.0;
+		double ballDrawingSeconds = 0.0;
+		double uiDrawingSeconds = 0.0;
+		double renderSeconds = 0.0;
+		double presentationSeconds = 0.0;
+		double frameSeconds = 0.0;
+	};
+
+	struct PhaseStatistics {
+		double average = 0.0;
+		double median = 0.0;
+		double p95 = 0.0;
+		double p99 = 0.0;
+		double maximum = 0.0;
+	};
+
+	struct SceneResult {
+		std::string name;
+		std::size_t ballCount = 0;
+		double averageFps = 0.0;
+		PhaseStatistics phases[6];
+	};
+
+	static constexpr int BenchmarkWarmupFrames = 60;
+	static constexpr std::size_t BenchmarkMeasuredFrames = 600;
+	static constexpr float BenchmarkFrameTime = 1.0f / 60.0f;
+	static constexpr const char* PhaseNames[6] = {
+		"Physics", "Balls", "UI", "Render (GPU)", "Present+", "Frame"
+	};
+	static constexpr const char* PhaseColumns[6] = {
+		"physics", "balls", "ui", "render", "present", "frame"
+	};
+
+	std::vector<FrameBenchmarkScene> _benchmarkScenes;
+	std::vector<FrameSample> _benchmarkSamples;
+	std::vector<SceneResult> _benchmarkResults;
+	std::size_t _benchmarkSceneIndex = 0;
+	int _benchmarkFrame = 0;
+	bool _hasPendingBenchmarkSample = false;
+	FrameSample _pendingBenchmarkSample;
+	double _lastRenderSeconds = 0.0;
+
+	inline void _createEngine(
+		int numBalls,
+		int minimumBallRadius,
+		int maximumBallRadius,
+		Gravity gravity,
+		float gravityStrength,
+		float velocityDrag,
+		SpawnPattern spawnPattern
+	) {
+		delete _engine;
+		_engine = new BallCollisionEngine(
+			ScreenWidth(),
+			ScreenHeight(),
+			numBalls,
+			minimumBallRadius,
+			maximumBallRadius,
+			gravity,
+			gravityStrength,
+			velocityDrag,
+			spawnPattern
+		);
+		_engine->Create();
+		_selectedBall = nullptr;
+		_selectedLine = nullptr;
+		_isDrawingWall = false;
+
+		const std::size_t expectedQuadVertices =
+			static_cast<std::size_t>(numBalls + 1) * 4;
+		_quadVertices.reserve(expectedQuadVertices);
+	}
+
+	inline static const char* _spawnPatternName(SpawnPattern pattern) {
+		switch (pattern) {
+		case SpawnPattern::Random:
+			return "random";
+		case SpawnPattern::CircleCluster:
+			return "circle_cluster";
+		case SpawnPattern::RectangleCluster:
+			return "rectangle_cluster";
+		}
+		return "unknown";
+	}
+
+	inline void _startBenchmarkScene() {
+		const FrameBenchmarkScene& scene = _benchmarkScenes[_benchmarkSceneIndex];
+		std::srand(0xC0FFEEu + static_cast<unsigned int>(_benchmarkSceneIndex));
+		_createEngine(
+			scene.numBalls,
+			scene.minimumBallRadius,
+			scene.maximumBallRadius,
+			scene.gravity,
+			scene.gravityStrength,
+			scene.velocityDrag,
+			scene.spawnPattern
+		);
+		_benchmarkFrame = 0;
+		_benchmarkSamples.clear();
+		_hasPendingBenchmarkSample = false;
+	}
+
+	inline static PhaseStatistics _computeStatistics(std::vector<double> values) {
+		PhaseStatistics statistics;
+		if (values.empty())
+			return statistics;
+
+		std::sort(values.begin(), values.end());
+		double sum = 0.0;
+		for (double value : values)
+			sum += value;
+
+		// nearest-rank percentile
+		auto percentile = [&values](double fraction) {
+			const std::size_t rank = static_cast<std::size_t>(
+				std::ceil(fraction * values.size())
+			);
+			return values[std::clamp<std::size_t>(rank, 1, values.size()) - 1];
+		};
+		statistics.average = sum / values.size();
+		statistics.median = percentile(0.5);
+		statistics.p95 = percentile(0.95);
+		statistics.p99 = percentile(0.99);
+		statistics.maximum = values.back();
+		return statistics;
+	}
+
+	inline void _reportBenchmarkScene() {
+		const FrameBenchmarkScene& scene = _benchmarkScenes[_benchmarkSceneIndex];
+		SceneResult result;
+		result.name = scene.name;
+		result.ballCount = _engine->Balls.size();
+
+		std::vector<double> values(_benchmarkSamples.size());
+		for (int phase = 0; phase < 6; ++phase) {
+			for (std::size_t index = 0; index < _benchmarkSamples.size(); ++index) {
+				const FrameSample& sample = _benchmarkSamples[index];
+				const double phaseSeconds[6] = {
+					sample.physicsSeconds,
+					sample.ballDrawingSeconds,
+					sample.uiDrawingSeconds,
+					sample.renderSeconds,
+					sample.presentationSeconds,
+					sample.frameSeconds
+				};
+				values[index] = phaseSeconds[phase] * 1000.0;
+			}
+			result.phases[phase] = _computeStatistics(values);
+		}
+		result.averageFps = result.phases[5].average > 0.0
+			? 1000.0 / result.phases[5].average
+			: 0.0;
+
+		std::cout << std::fixed << std::setprecision(3)
+			<< "\n### Scene " << _benchmarkSceneIndex + 1
+			<< "/" << _benchmarkScenes.size() << ": " << scene.name
+			<< " (" << result.ballCount << " balls, radius "
+			<< scene.minimumBallRadius << "-" << scene.maximumBallRadius
+			<< ", " << _spawnPatternName(scene.spawnPattern)
+			<< ", gravity " << _gravityName() << ")\n\n"
+			<< "| Phase | Avg ms | Median ms | P95 ms | P99 ms | Max ms |\n"
+			<< "|:---|---:|---:|---:|---:|---:|\n";
+		for (int phase = 0; phase < 6; ++phase) {
+			const PhaseStatistics& statistics = result.phases[phase];
+			std::cout << "| " << PhaseNames[phase]
+				<< " | " << statistics.average
+				<< " | " << statistics.median
+				<< " | " << statistics.p95
+				<< " | " << statistics.p99
+				<< " | " << statistics.maximum << " |\n";
+		}
+		std::cout << "\nAverage FPS: " << result.averageFps << "\n" << std::flush;
+
+		if (!_config.frameBenchmarkOutput.empty())
+			_appendBenchmarkCsv(result);
+		_benchmarkResults.push_back(result);
+	}
+
+	inline void _appendBenchmarkCsv(const SceneResult& result) const {
+		const std::filesystem::path& path = _config.frameBenchmarkOutput;
+		std::error_code error;
+		const bool writeHeader = !std::filesystem::exists(path, error)
+			|| std::filesystem::file_size(path, error) == 0;
+
+		std::ofstream output(path, std::ios::app);
+		if (!output) {
+			std::cerr << "Unable to write frame benchmark CSV: "
+				<< path.string() << '\n';
+			return;
+		}
+
+		if (writeHeader) {
+			output << "scene,balls,frames,avg_fps";
+			for (const char* column : PhaseColumns) {
+				output << ',' << column << "_avg_ms"
+					<< ',' << column << "_median_ms"
+					<< ',' << column << "_p95_ms"
+					<< ',' << column << "_p99_ms"
+					<< ',' << column << "_max_ms";
+			}
+			output << '\n';
+		}
+
+		output << std::fixed << std::setprecision(4)
+			<< '"' << result.name << '"'
+			<< ',' << result.ballCount
+			<< ',' << BenchmarkMeasuredFrames
+			<< ',' << result.averageFps;
+		for (const PhaseStatistics& statistics : result.phases) {
+			output << ',' << statistics.average
+				<< ',' << statistics.median
+				<< ',' << statistics.p95
+				<< ',' << statistics.p99
+				<< ',' << statistics.maximum;
+		}
+		output << '\n';
+	}
+
+	inline void _printBenchmarkSummary() const {
+		std::cout << std::fixed << std::setprecision(3)
+			<< "\n## Frame benchmark summary\n\n"
+			<< "| Scene | Balls | Avg FPS | Frame avg ms | Frame p99 ms"
+			<< " | Physics avg ms | Balls avg ms | UI avg ms"
+			<< " | Render (GPU) avg ms | Render p99 ms | Present+ avg ms |\n"
+			<< "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+		for (const SceneResult& result : _benchmarkResults) {
+			std::cout << "| " << result.name
+				<< " | " << result.ballCount
+				<< " | " << result.averageFps
+				<< " | " << result.phases[5].average
+				<< " | " << result.phases[5].p99
+				<< " | " << result.phases[0].average
+				<< " | " << result.phases[1].average
+				<< " | " << result.phases[2].average
+				<< " | " << result.phases[3].average
+				<< " | " << result.phases[3].p99
+				<< " | " << result.phases[4].average << " |\n";
+		}
+		std::cout << std::flush;
+	}
+
+	// Called at the start of each frame. fElapsedTime covers the whole of the
+	// previous frame, so the previous frame's sample is completed here.
+	// Returns false once the last scene has been reported.
+	inline bool _advanceFrameBenchmark(float elapsedTime) {
+		if (_hasPendingBenchmarkSample) {
+			FrameSample& sample = _pendingBenchmarkSample;
+			sample.renderSeconds = _lastRenderSeconds;
+			sample.frameSeconds = elapsedTime;
+			sample.presentationSeconds = std::max(
+				0.0,
+				static_cast<double>(elapsedTime)
+					- sample.physicsSeconds
+					- sample.ballDrawingSeconds
+					- sample.uiDrawingSeconds
+					- sample.renderSeconds
+			);
+			_benchmarkSamples.push_back(sample);
+			_hasPendingBenchmarkSample = false;
+		}
+
+		if (_benchmarkSamples.size() < BenchmarkMeasuredFrames)
+			return true;
+
+		_reportBenchmarkScene();
+		++_benchmarkSceneIndex;
+		if (_benchmarkSceneIndex >= _benchmarkScenes.size()) {
+			_printBenchmarkSummary();
+			return false;
+		}
+		_startBenchmarkScene();
+		return true;
+	}
+
 	// White disc with anti-aliased edges and a hand-built mip chain, so balls
 	// a few pixels wide still look round when the texture is minified.
 	inline void _createCircleTexture() {
@@ -264,6 +557,8 @@ private:
 	// Called by the engine in place of drawing layer 0. Balls, walls and
 	// lines go out in two draw calls; the HUD is two small textures.
 	inline void _renderScene() {
+		const auto renderStart = std::chrono::steady_clock::now();
+
 		glMatrixMode(GL_PROJECTION);
 		glPushMatrix();
 		glLoadIdentity();
@@ -291,6 +586,14 @@ private:
 		glPopMatrix();
 		glMatrixMode(GL_PROJECTION);
 		glPopMatrix();
+
+		// Wait for the GPU so its draw time is separated from SwapBuffers.
+		if (_config.frameBenchmark) {
+			glFinish();
+			_lastRenderSeconds = std::chrono::duration<double>(
+				std::chrono::steady_clock::now() - renderStart
+			).count();
+		}
 	}
 
 	inline bool _isPointInBall(float x1, float y1, float r1, float x, float y) {
@@ -428,6 +731,10 @@ private:
 	}
 
 	inline std::string _speedText() const {
+		if (_config.frameBenchmark) {
+			return "BENCH " + std::to_string(_benchmarkSceneIndex + 1)
+				+ "/" + std::to_string(_benchmarkScenes.size());
+		}
 		if (_isPaused)
 			return "PAUSED";
 		std::ostringstream text;
@@ -440,22 +747,44 @@ private:
 public:
 	bool OnUserCreate() override
 	{
-		_engine = new BallCollisionEngine(
-			ScreenWidth(),
-			ScreenHeight(),
-			_config.numBalls,
-			_config.minimumBallRadius,
-			_config.maximumBallRadius,
-			_config.gravity,
-			_config.gravityStrength,
-			_config.velocityDrag,
-			_config.spawnPattern
-		);
-		_engine->Create();
-
-		const std::size_t expectedQuadVertices =
-			static_cast<std::size_t>(_config.numBalls + 1) * 4;
-		_quadVertices.reserve(expectedQuadVertices);
+		if (_config.frameBenchmark) {
+			_benchmarkScenes = {
+				{ "random 2k center", 2'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
+				{ "random 8k center", 8'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
+				{ "random 20k center", 20'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
+				{
+					"config.ini",
+					_config.numBalls,
+					_config.minimumBallRadius,
+					_config.maximumBallRadius,
+					_config.spawnPattern,
+					_config.gravity,
+					_config.gravityStrength,
+					_config.velocityDrag
+				}
+			};
+			std::cout << "BallCollision frame benchmark: "
+				<< ScreenWidth() << "x" << ScreenHeight() << ", "
+				<< BenchmarkWarmupFrames << " warm-up + "
+				<< BenchmarkMeasuredFrames << " measured frames per scene, "
+				<< "fixed simulation step 1/60 s\n";
+			if (const char* glRenderer = reinterpret_cast<const char*>(
+				glGetString(GL_RENDERER))) {
+				std::cout << "GL renderer: " << glRenderer << "\n";
+			}
+			_startBenchmarkScene();
+		}
+		else {
+			_createEngine(
+				_config.numBalls,
+				_config.minimumBallRadius,
+				_config.maximumBallRadius,
+				_config.gravity,
+				_config.gravityStrength,
+				_config.velocityDrag,
+				_config.spawnPattern
+			);
+		}
 		_createCircleTexture();
 
 		_hudSprite = std::make_unique<olc::Sprite>(250, 114);
@@ -500,7 +829,9 @@ public:
 
 		if (GetKey(olc::Key::ESCAPE).bPressed)
 			return false;
-		if (GetKey(olc::Key::G).bPressed)
+		if (_config.frameBenchmark && !_advanceFrameBenchmark(fElapsedTime))
+			return false;
+		if (!_config.frameBenchmark && GetKey(olc::Key::G).bPressed)
 			_engine->CycleGravity();
 
 		if (fElapsedTime > 0.0f) {
@@ -516,11 +847,17 @@ public:
 		}
 
 		FramePhases currentFramePhases;
-		_handleKeys();
-		_selectAndDragBall();
+		if (!_config.frameBenchmark) {
+			_handleKeys();
+			_selectAndDragBall();
+		}
 
 		auto phaseStart = Clock::now();
-		if (!_isPaused) {
+		if (_config.frameBenchmark) {
+			float simulationElapsedTime = BenchmarkFrameTime;
+			_engine->Update(simulationElapsedTime);
+		}
+		else if (!_isPaused) {
 			float simulationElapsedTime = fElapsedTime * _timeScale;
 			_engine->Update(simulationElapsedTime);
 		}
@@ -574,7 +911,8 @@ public:
 		}
 
 		// draw mouse force radius
-		if (GetKey(olc::Key::Q).bHeld != GetKey(olc::Key::E).bHeld) {
+		if (!_config.frameBenchmark
+			&& GetKey(olc::Key::Q).bHeld != GetKey(olc::Key::E).bHeld) {
 			_pushCircleOutline(
 				mouseX,
 				mouseY,
@@ -642,6 +980,20 @@ public:
 			std::chrono::duration<double>(Clock::now() - phaseStart).count();
 		_lastFramePhases = currentFramePhases;
 		_hasLastFramePhases = true;
+
+		if (_config.frameBenchmark) {
+			if (_benchmarkFrame >= BenchmarkWarmupFrames) {
+				_pendingBenchmarkSample = FrameSample();
+				_pendingBenchmarkSample.physicsSeconds =
+					currentFramePhases.physicsSeconds;
+				_pendingBenchmarkSample.ballDrawingSeconds =
+					currentFramePhases.ballDrawingSeconds;
+				_pendingBenchmarkSample.uiDrawingSeconds =
+					currentFramePhases.uiDrawingSeconds;
+				_hasPendingBenchmarkSample = true;
+			}
+			++_benchmarkFrame;
+		}
 
 		return true;
 	}
