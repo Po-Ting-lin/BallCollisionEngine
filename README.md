@@ -122,14 +122,15 @@ The build copies the configuration file beside the executable. Running through
 The top-left overlay reports smoothed frame time and these CPU phases:
 
 - Physics simulation
-- Full-screen clear
-- Ball rasterization
-- Lines and UI drawing
-- `Present+`, the remaining frame time after the four measured phases
+- Ball geometry: building the vertex array for every ball
+- Lines and UI: wall geometry, helper lines, and the HUD text texture
+- `Present+`, the remaining frame time after the three measured phases
 
-`Present+` includes pixel-engine input handling, framebuffer upload, OpenGL
-presentation, and other small frame-loop costs. Measurements are smoothed for
-readability.
+Everything is drawn on the GPU. A custom render function on layer 0 sends all
+balls and walls to OpenGL as one batch of textured quads, so the 1920x1080 CPU
+framebuffer is no longer uploaded every frame. `Present+` therefore covers
+pixel-engine input handling, the OpenGL draw calls, buffer presentation, and
+other small frame-loop costs.
 
 ## Manual CMake Build
 

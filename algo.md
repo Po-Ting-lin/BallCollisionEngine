@@ -326,8 +326,14 @@ there are at least 4,096 balls. Below that threshold, the loop runs serially
 because measured OpenMP dispatch and barrier overhead exceeds the integration
 work.
 
-Rendering is sequential because `FillCircle` writes into a shared
-olcPixelGameEngine pixel buffer.
+Rendering runs on the GPU through the OpenGL 1.x renderer. Each frame the CPU
+writes four vertices per ball into one array, and a custom render function on
+layer 0 draws the whole array with a single `glDrawArrays(GL_QUADS, ...)`.
+Every quad samples one white anti-aliased disc texture with a mip chain and is
+tinted by its vertex color. Walls, helper lines, and the mouse-force ring
+reuse the opaque centre of the same texture. The HUD and help bar are small
+CPU sprites uploaded as their own textures, so the full-screen framebuffer is
+never uploaded.
 
 Collision detection and response are sequential.
 

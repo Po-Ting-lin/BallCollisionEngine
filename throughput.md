@@ -322,6 +322,15 @@ pixel-engine draw path (8,000 balls, radii 2–3):
 both branch-heavy and cache-hostile. The in-app profiler is the reference
 for real numbers on the target machine.
 
+## GPU Rendering
+
+Rendering later moved to the GPU entirely. The CPU now only fills a vertex
+array (four vertices per ball) and the pixel engine's per-frame 1920x1080
+framebuffer upload is skipped by replacing layer 0 with a custom OpenGL render
+function. Both the screen clear and per-pixel circle rasterization are gone
+from the CPU. Measure the result with the in-app profiler: `Balls` is the
+vertex-array build and the GPU work appears in `Present+`.
+
 ## Next Optimization Priorities
 
 1. Record the interactive full-frame profiler values for physics, ball drawing,
