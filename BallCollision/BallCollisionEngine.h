@@ -51,17 +51,33 @@ public:
 	std::vector<Ball> Balls;
 	std::vector<Line> Lines;
 private:
-	// Wall contacts: the stand-in ball for each contact and the real ball it
+	// The fields the narrow phase reads and writes, copied out of Balls in
+	// packed grid-cell order so each cell's balls are contiguous in memory.
+	// Results are copied back to Balls at the end of every substep.
+	struct CellBall {
+		float x, y;
+		float vx, vy;
+		float r;
+		float mass;
+		std::uint32_t index; // position in Balls
+	};
+
+	std::vector<CellBall> _cellBalls;
+	std::vector<std::size_t> _gridBallSlots; // Balls index -> _cellBalls index
+	// Wall contacts: the stand-in ball for each contact and the Balls index it
 	// belongs to, kept at matching indices. Vectors keep their capacity across
 	// substeps, and pointers into _fakeBalls are taken only after it stops
 	// growing.
-	std::vector<Ball> _fakeBalls;
-	std::vector<Ball*> _lineContactBalls;
-	std::vector<std::pair<Ball*, Ball*>> _collisionList;
+	std::vector<CellBall> _fakeBalls;
+	std::vector<std::size_t> _lineContactBalls;
+	std::vector<std::pair<CellBall*, CellBall*>> _collisionList;
 	std::vector<std::size_t> _gridCellCounts;
 	std::vector<std::size_t> _gridCellOffsets;
-	std::vector<std::size_t> _gridCellWriteOffsets;
 	std::vector<std::size_t> _gridBallCells;
+	std::vector<std::size_t> _gridBallRows;
+	std::vector<std::size_t> _gridSortScratch;
+	std::vector<std::size_t> _gridColumnStarts;
+	std::vector<std::size_t> _gridRowStarts;
 	std::vector<std::size_t> _gridBallIndices;
 	std::vector<std::size_t> _activeGridCells;
 	int _ballNum;
@@ -115,13 +131,53 @@ private:
 	void _createCircleClusterPattern();
 	void _createRectangleClusterPattern();
 	void _updatePositionByVelocity(float deltaTime);
-	void _resolveBoundaryCollision(Ball& ball) const;
 	void _resolveBoundaryCollisions();
 	void _staticCollision(PhysicsMetrics* metrics);
 	void _resolveLineCollisions();
 	void _buildSpatialGrid();
+	void _gatherCellBalls();
+	void _scatterCellBalls();
 	std::uint64_t _resolveGridCollisions();
-	void _resolveBallPair(std::size_t firstIndex, std::size_t secondIndex);
+	void _resolveBallPair(std::size_t firstSlot, std::size_t secondSlot);
 	std::uint64_t _dynamicCollision();
+
+	// Used for both Ball and CellBall.
+	template <typename BallType>
+	void _resolveBoundaryCollision(BallType& ball) const {
+		const float minimumX = ball.r;
+		const float maximumX = static_cast<float>(_screenWidth) - ball.r;
+		const float minimumY = ball.r;
+		const float maximumY = static_cast<float>(_screenHeight) - ball.r;
+
+		if (minimumX >= maximumX) {
+			ball.x = _screenWidth * 0.5f;
+			ball.vx = 0.0f;
+		}
+		else if (ball.x <= minimumX) {
+			ball.x = minimumX;
+			if (ball.vx < 0.0f)
+				ball.vx = -ball.vx;
+		}
+		else if (ball.x >= maximumX) {
+			ball.x = maximumX;
+			if (ball.vx > 0.0f)
+				ball.vx = -ball.vx;
+		}
+
+		if (minimumY >= maximumY) {
+			ball.y = _screenHeight * 0.5f;
+			ball.vy = 0.0f;
+		}
+		else if (ball.y <= minimumY) {
+			ball.y = minimumY;
+			if (ball.vy < 0.0f)
+				ball.vy = -ball.vy;
+		}
+		else if (ball.y >= maximumY) {
+			ball.y = maximumY;
+			if (ball.vy > 0.0f)
+				ball.vy = -ball.vy;
+		}
+	}
 };
 

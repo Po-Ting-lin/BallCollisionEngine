@@ -430,6 +430,32 @@ Observations:
 - The 20,000-ball scene holds 60 FPS on average, but its P99 frame time
   (17.2 ms) misses a 60 Hz budget.
 
+## Physics Optimization Series
+
+Each step is a separate commit. Times are physics milliseconds per frame, the
+median of three runs on the machine above (GCC 16.2, Release). `Headless 10k`
+is the total of the `grid scale` 10,000-ball case in `BallCollisionBenchmark`;
+the other columns are `Physics` averages from `-FrameBenchmark`.
+
+| Step | Headless 10k | 2k center | 8k center | 20k center | 8k center walls | config.ini 8k |
+|:---|---:|---:|---:|---:|---:|---:|
+| Before | 8.565 | 0.557 | 3.284 | 11.546 | 4.490 | 2.059 |
+| 1. Cell-ordered working copy | 7.854 | 0.513 | 3.006 | 10.169 | 4.088 | 2.072 |
+
+Notes per step:
+
+1. **Cell-ordered working copy.** The narrow phase used to read 40-byte `Ball`
+   records through an index array, in spawn order, which is close to random
+   memory access for the `random` pattern. Each substep now copies the hot
+   fields into 28-byte records packed in row-major cell order, runs the pair
+   tests, impulses, and boundary clamping on them, and copies positions and
+   velocities back. With cells kept in first-appearance order, results were
+   bit-identical and the gain was about 10% at 20,000 balls. Row-major order
+   added roughly another 10% on the 8,000-ball scenes, but changes the pair
+   order, so results differ slightly. `config.ini` spawns balls row by row,
+   so it already had good locality and does not change. Steady-state frames
+   still make no heap allocations.
+
 ## Next Optimization Priorities
 
 1. Record the interactive full-frame profiler values for physics, ball drawing,

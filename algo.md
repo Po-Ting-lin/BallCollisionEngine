@@ -185,9 +185,19 @@ cell size is set to the largest current ball diameter. Each ball is inserted
 into the cell containing its center.
 
 The grid uses packed flat arrays. Rebuilding it resets counters only for cells
-that were active in the previous substep, counts the new occupants, and packs
-ball indices into one contiguous array. Collision traversal iterates only the
-active-cell list, so empty cells are neither cleared nor scanned.
+that were active in the previous substep. Two stable counting-sort passes, by
+column and then by row, pack ball indices in row-major cell order, so
+neighbouring cells are close together in memory. Balls in the same cell keep
+their `Balls` order. Collision traversal iterates only the active-cell list, so
+empty cells are neither cleared nor scanned.
+
+The narrow phase does not read `Balls` directly. After the grid is built, each
+ball's position, velocity, radius, mass, and `Balls` index are copied into a
+28-byte working record in packed cell order. Pair tests, positional
+correction, impulses, and boundary clamping run on these records, which are
+contiguous for each cell. Positions and velocities are copied back to `Balls`
+at the end of the substep. `Balls` keeps its order, so pointers held by the UI
+(for example the dragged ball) stay valid.
 
 Pairs are tested within the same cell and across four forward neighbors:
 
@@ -289,8 +299,9 @@ velocity = -ball.velocity
 
 Line creation is commented out in the default scene.
 
-Temporary fake balls use stable `std::deque` storage until impulse resolution.
-Zero-length lines are ignored, and a ball centered exactly on its closest line
+Temporary fake balls are stored in a `std::vector` that keeps its capacity
+across substeps; pointers to them are taken only after the line pass, when the
+vector no longer grows. Zero-length lines are ignored, and a ball centered exactly on its closest line
 point receives a perpendicular fallback normal.
 
 ## Collision-Pair Traversal
