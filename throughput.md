@@ -443,6 +443,8 @@ the other columns are `Physics` averages from `-FrameBenchmark`.
 | 1. Cell-ordered working copy | 7.854 | 0.513 | 3.006 | 10.169 | 4.088 | 2.072 |
 | 2. Impulse fused into pair test | 6.376 | 0.465 | 2.582 | 8.394 | 4.113 | 1.718 |
 | 3. 32-bit grid indices, no radius pass | 6.339 | 0.466 | 2.538 | 8.227 | 4.030 | 1.644 |
+| 4. Parallel row bands | 2.560 | 0.457 | 1.520 | 3.478 | 3.148 | 1.433 |
+| **Total change** | **-70%** | **-18%** | **-54%** | **-70%** | **-30%** | **-30%** |
 
 Notes per step:
 
@@ -475,6 +477,25 @@ Notes per step:
    The gain is small: 1-4% on most scenes and 8% on the small-radius grid case,
    where the grid build is a larger share. It is kept because no scene is
    slower.
+4. **Parallel row bands.** Grid rows are split into up to 33 bands of at
+   least two rows, balanced by ball count. A cell only touches its own row and
+   the row below, so bands of the same parity never share a ball. Even bands
+   run in parallel, then odd bands, with no locks. The serial path uses the
+   same band order, so results are bit-identical for any thread count. A test
+   compares one thread with several, and the state hash of five scenes
+   matched for 1, 3, and 6 threads. What did not work:
+   - The first version cut bands by row count and went parallel at 4,096
+     balls. Clustered scenes then had only a few busy bands, and OpenMP
+     `if(false)` regions still cost a few microseconds each, so `config.ini`
+     and the small cases got slower.
+   - Balancing bands by ball count and deciding from the previous substep's
+     candidate count (at least 16,384) fixed both.
+   - Parallel gather and scatter copies were slower at every size, even
+     20,000 balls, so they stay serial.
+   - The small-radius 5,000-ball headless case (sparse, about 2,300
+     candidates per substep, so it stays serial) is 0.04 ms (5%) slower than
+     after step 3, because of the band bookkeeping. Every other scene is
+     faster.
 
 ## Next Optimization Priorities
 
@@ -482,9 +503,11 @@ Notes per step:
    and `Present+` under the target scene.
 2. Use GPU-instanced circle rendering if ball drawing or presentation dominates.
 3. Tune cell size for known radius distributions.
-4. Consider parallel candidate processing only with a race-safe accumulated
-   correction scheme.
-5. Consider GPU compute and instanced rendering if the target remains tens of
+4. Put walls into the grid. Every ball is still tested against every wall
+   (`O(N * L)`), which is now the largest cost in the wall scene.
+5. Let resting balls sleep, so static scenes such as `config.ini` skip most
+   pair work.
+6. Consider GPU compute and instanced rendering if the target remains tens of
    thousands of balls.
 
 ## Limitations

@@ -346,7 +346,21 @@ reuse the opaque centre of the same texture. The HUD and help bar are small
 CPU sprites uploaded as their own textures, so the full-screen framebuffer is
 never uploaded.
 
-Collision detection and response are sequential.
+Ball-ball collision detection and response run in parallel by row bands. The
+grid rows are split into up to 33 bands of at least two rows, with edges placed
+so each band holds about the same number of balls. A cell tests only its own
+row and the row below it, so a band touches its own rows plus the first row of
+the next band. All even bands therefore run in parallel without sharing a
+ball, then all odd bands. No locks are needed, and per-band contact counters
+are summed at the end.
+
+The band layout depends only on ball positions, and the serial path visits the
+bands in the same even-then-odd order, so results are bit-identical for any
+thread count. The parallel path is used only when the previous substep had at
+least 16,384 candidate checks; below that, starting an OpenMP team costs more
+than it saves. Ball-wall tests, the grid build, and the working-copy copies
+stay serial. Parallel copies were measured and were slower, even at 20,000
+balls.
 
 ## Complexity
 

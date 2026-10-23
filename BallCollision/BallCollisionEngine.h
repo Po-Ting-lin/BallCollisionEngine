@@ -76,6 +76,12 @@ private:
 	std::vector<std::uint32_t> _gridRowStarts;
 	std::vector<std::uint32_t> _gridBallIndices;
 	std::vector<std::uint32_t> _activeGridCells;
+	// Index into _activeGridCells of the first active cell of each row.
+	std::vector<std::uint32_t> _activeRowStarts;
+	// First grid row of each collision band, then the row count.
+	std::vector<int> _bandFirstRows;
+	// Candidate checks in the previous substep, to decide on going parallel.
+	std::uint64_t _lastPairChecks;
 	// Largest ball radius, found during integration every substep.
 	float _maximumBallRadiusThisSubstep;
 	int _ballNum;
@@ -135,8 +141,19 @@ private:
 	void _buildSpatialGrid();
 	void _gatherCellBalls();
 	void _scatterCellBalls();
+	struct ContactCounters {
+		std::uint64_t pairChecks = 0;
+		std::uint64_t contacts = 0;
+		std::uint64_t impulses = 0;
+	};
+
 	std::uint64_t _resolveGridCollisions();
-	void _resolveBallPair(std::size_t firstSlot, std::size_t secondSlot);
+	void _resolveGridRows(int firstRow, int endRow, ContactCounters& counters);
+	void _resolveBallPair(
+		std::size_t firstSlot,
+		std::size_t secondSlot,
+		ContactCounters& counters
+	);
 
 	// Used for both Ball and CellBall.
 	template <typename BallType>

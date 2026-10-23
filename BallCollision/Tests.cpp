@@ -6,6 +6,9 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <vector>
+
+#include <omp.h>
 
 namespace {
 	Ball makeBall(
@@ -638,6 +641,42 @@ namespace {
 		);
 	}
 
+	// The collision bands must be race-free: any thread count has to produce
+	// exactly the same state as one thread.
+	bool testParallelCollisionMatchesSingleThread() {
+		auto run = [](int threads) {
+			omp_set_num_threads(threads);
+			std::srand(4321);
+			BallCollisionEngine engine(
+				1920, 1080, 6'000, 2, 3, Gravity::Center, 1.2f, 0.8f
+			);
+			engine.Create();
+			engine.AddLine(600.0f, 300.0f, 1300.0f, 300.0f, 4.0f);
+			for (int frame = 0; frame < 30; ++frame) {
+				float elapsedTime = 1.0f / 60.0f;
+				engine.Update(elapsedTime);
+			}
+			return engine.Balls;
+		};
+
+		const int defaultThreads = omp_get_max_threads();
+		const std::vector<Ball> single = run(1);
+		const std::vector<Ball> multiple = run(std::max(2, defaultThreads));
+		omp_set_num_threads(defaultThreads);
+
+		bool identical = single.size() == multiple.size();
+		for (std::size_t index = 0; identical && index < single.size(); ++index) {
+			identical = single[index].x == multiple[index].x
+				&& single[index].y == multiple[index].y
+				&& single[index].vx == multiple[index].vx
+				&& single[index].vy == multiple[index].vy;
+		}
+		return require(
+			identical,
+			"parallel collision bands should match a single thread exactly"
+		);
+	}
+
 	bool testResetRespawnsConfiguredBalls() {
 		BallCollisionEngine engine(400, 400, 25);
 		engine.Create();
@@ -674,6 +713,7 @@ int main() {
 	passed = testMouseForcePullsAndPushes() && passed;
 	passed = testLinesCanBeAddedAndRemoved() && passed;
 	passed = testBallsBounceOffWalls() && passed;
+	passed = testParallelCollisionMatchesSingleThread() && passed;
 	passed = testResetRespawnsConfiguredBalls() && passed;
 
 	if (!passed)

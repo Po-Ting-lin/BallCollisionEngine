@@ -47,6 +47,8 @@ BallCollisionEngine::BallCollisionEngine(
 	_substepContacts = 0;
 	_substepImpulses = 0;
 	_maximumBallRadiusThisSubstep = 0.5f;
+	_lastPairChecks = 0;
+	_bandFirstRows.reserve(64);
 	_spawnPattern = spawnPattern;
 }
 
@@ -632,20 +634,26 @@ void BallCollisionEngine::_buildSpatialGrid() {
 		_gridBallIndices[_gridRowStarts[_gridBallRows[index]]++] = index;
 	}
 
+	_activeRowStarts.assign(static_cast<std::size_t>(_gridRows) + 1, 0);
 	for (std::uint32_t slot = 0; slot < ballCount; ++slot) {
-		const std::uint32_t cellIndex = _gridBallCells[_gridBallIndices[slot]];
+		const std::uint32_t index = _gridBallIndices[slot];
+		const std::uint32_t cellIndex = _gridBallCells[index];
 		if (_gridCellCounts[cellIndex] == 0) {
 			_activeGridCells.push_back(cellIndex);
 			_gridCellOffsets[cellIndex] = slot;
+			++_activeRowStarts[_gridBallRows[index] + 1];
 		}
 		++_gridCellCounts[cellIndex];
 	}
+	for (int row = 0; row < _gridRows; ++row)
+		_activeRowStarts[row + 1] += _activeRowStarts[row];
 }
 
+// Copies are serial: parallel copies measured slower even at 20,000 balls.
 void BallCollisionEngine::_gatherCellBalls() {
 	_cellBalls.resize(_gridBallIndices.size());
 	for (std::size_t slot = 0; slot < _gridBallIndices.size(); ++slot) {
-		const std::size_t ballIndex = _gridBallIndices[slot];
+		const std::uint32_t ballIndex = _gridBallIndices[slot];
 		const Ball& ball = Balls[ballIndex];
 		CellBall& cellBall = _cellBalls[slot];
 		cellBall.x = ball.x;
@@ -654,7 +662,7 @@ void BallCollisionEngine::_gatherCellBalls() {
 		cellBall.vy = ball.vy;
 		cellBall.r = ball.r;
 		cellBall.mass = ball.mass;
-		cellBall.index = static_cast<std::uint32_t>(ballIndex);
+		cellBall.index = ballIndex;
 	}
 }
 
@@ -668,7 +676,85 @@ void BallCollisionEngine::_scatterCellBalls() {
 	}
 }
 
+// Rows are split into bands of at least two rows. A cell only touches its own
+// row and the row below, so a band touches its rows plus the first row of the
+// next band. Bands of the same parity therefore never share a ball: all even
+// bands run in parallel, then all odd bands, without locks.
+//
+// Band edges are placed so each band holds about the same number of balls,
+// which keeps clustered scenes balanced. They depend only on the ball
+// positions, and the serial path visits bands in the same order, so results
+// do not depend on the thread count.
 std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
+	constexpr int MinimumBandRows = 2;
+	constexpr std::uint32_t TargetBandCount = 32;
+	// Going parallel pays off only with enough narrow-phase work; the previous
+	// substep's candidate count is the estimate.
+	constexpr std::uint64_t ParallelPairCheckThreshold = 16'384;
+
+	if (_cellBalls.empty())
+		return 0;
+
+	const std::uint32_t ballCount = static_cast<std::uint32_t>(_cellBalls.size());
+	// rounding up keeps the band count at most TargetBandCount + 1
+	const std::uint32_t ballsPerBand =
+		(ballCount + TargetBandCount - 1) / TargetBandCount;
+	_bandFirstRows.clear();
+	_bandFirstRows.push_back(0);
+	std::uint32_t bandFirstSlot = 0;
+	for (int row = 0; row + 1 < _gridRows; ++row) {
+		// _gridRowStarts[row] is the end of row `row` after the packing sort
+		const std::uint32_t rowEndSlot = _gridRowStarts[row];
+		if (row + 1 - _bandFirstRows.back() >= MinimumBandRows
+			&& rowEndSlot - bandFirstSlot >= ballsPerBand) {
+			_bandFirstRows.push_back(row + 1);
+			bandFirstSlot = rowEndSlot;
+		}
+	}
+	_bandFirstRows.push_back(_gridRows);
+	const int bandCount = static_cast<int>(_bandFirstRows.size()) - 1;
+
+	std::uint64_t pairChecks = 0;
+	std::uint64_t contacts = 0;
+	std::uint64_t impulses = 0;
+	auto resolveBand = [this](int band, ContactCounters& counters) {
+		_resolveGridRows(_bandFirstRows[band], _bandFirstRows[band + 1], counters);
+	};
+
+	if (_lastPairChecks >= ParallelPairCheckThreshold) {
+		for (int parity = 0; parity < 2; ++parity) {
+#pragma omp parallel for schedule(dynamic, 1) reduction(+:pairChecks, contacts, impulses)
+			for (int band = parity; band < bandCount; band += 2) {
+				ContactCounters counters;
+				resolveBand(band, counters);
+				pairChecks += counters.pairChecks;
+				contacts += counters.contacts;
+				impulses += counters.impulses;
+			}
+		}
+	}
+	else {
+		ContactCounters counters;
+		for (int parity = 0; parity < 2; ++parity) {
+			for (int band = parity; band < bandCount; band += 2)
+				resolveBand(band, counters);
+		}
+		pairChecks = counters.pairChecks;
+		contacts = counters.contacts;
+		impulses = counters.impulses;
+	}
+
+	_lastPairChecks = pairChecks;
+	_substepContacts += contacts;
+	_substepImpulses += impulses;
+	return pairChecks;
+}
+
+void BallCollisionEngine::_resolveGridRows(
+	int firstRow,
+	int endRow,
+	ContactCounters& counters
+) {
 	static constexpr int NeighborOffsets[4][2] = {
 		{1, 0},
 		{-1, 1},
@@ -676,15 +762,16 @@ std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
 		{1, 1}
 	};
 
-	std::uint64_t pairChecks = 0;
-
-	for (std::uint32_t cellIndex : _activeGridCells) {
+	const std::uint32_t firstActive = _activeRowStarts[firstRow];
+	const std::uint32_t endActive = _activeRowStarts[endRow];
+	for (std::uint32_t active = firstActive; active < endActive; ++active) {
+		const std::uint32_t cellIndex = _activeGridCells[active];
 		const int row = static_cast<int>(cellIndex) / _gridColumns;
 		const int column = static_cast<int>(cellIndex) - row * _gridColumns;
 		const std::size_t cellCount = _gridCellCounts[cellIndex];
 		const std::size_t cellOffset = _gridCellOffsets[cellIndex];
 
-		pairChecks += cellCount > 1
+		counters.pairChecks += cellCount > 1
 			? cellCount * (cellCount - 1) / 2
 			: 0;
 		for (std::size_t first = 0; first < cellCount; ++first) {
@@ -693,7 +780,11 @@ std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
 				second < cellCount;
 				++second
 			) {
-				_resolveBallPair(cellOffset + first, cellOffset + second);
+				_resolveBallPair(
+					cellOffset + first,
+					cellOffset + second,
+					counters
+				);
 			}
 		}
 
@@ -717,7 +808,7 @@ std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
 
 			const std::size_t neighborOffset =
 				_gridCellOffsets[neighborCellIndex];
-			pairChecks += cellCount * neighborCount;
+			counters.pairChecks += cellCount * neighborCount;
 
 			for (std::size_t first = 0; first < cellCount; ++first) {
 				for (
@@ -725,18 +816,21 @@ std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
 					second < neighborCount;
 					++second
 				) {
-					_resolveBallPair(cellOffset + first, neighborOffset + second);
+					_resolveBallPair(
+						cellOffset + first,
+						neighborOffset + second,
+						counters
+					);
 				}
 			}
 		}
 	}
-
-	return pairChecks;
 }
 
 void BallCollisionEngine::_resolveBallPair(
 	std::size_t firstSlot,
-	std::size_t secondSlot
+	std::size_t secondSlot,
+	ContactCounters& counters
 ) {
 	constexpr float DistanceEpsilon = 1.0e-6f;
 
@@ -783,7 +877,7 @@ void BallCollisionEngine::_resolveBallPair(
 
 	// Elastic response along the contact normal, applied only to an
 	// approaching pair.
-	++_substepContacts;
+	++counters.contacts;
 	const float relativeNormalVelocity =
 		normalX * (first.vx - second.vx) + normalY * (first.vy - second.vy);
 	const float combinedMass = first.mass + second.mass;
@@ -795,5 +889,5 @@ void BallCollisionEngine::_resolveBallPair(
 	first.vy -= p * second.mass * normalY;
 	second.vx += p * first.mass * normalX;
 	second.vy += p * first.mass * normalY;
-	++_substepImpulses;
+	++counters.impulses;
 }
