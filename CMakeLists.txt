@@ -58,7 +58,14 @@ foreach(target_name IN LISTS ball_collision_targets)
         PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/BallCollision"
     )
-    target_link_libraries(${target_name} PRIVATE OpenMP::OpenMP_CXX)
+    if(MINGW)
+        # OpenMP::OpenMP_CXX names libgomp.dll.a explicitly, which would keep
+        # libgomp-1.dll dynamic under -static below.
+        target_compile_options(${target_name} PRIVATE ${OpenMP_CXX_FLAGS})
+        target_link_options(${target_name} PRIVATE ${OpenMP_CXX_FLAGS})
+    else()
+        target_link_libraries(${target_name} PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 
     set_target_properties(${target_name} PROPERTIES
         CXX_EXTENSIONS OFF
@@ -81,6 +88,13 @@ foreach(target_name IN LISTS ball_collision_targets)
                 -Wno-missing-field-initializers
             )
         endif()
+    endif()
+
+    # Link the GCC runtime (libstdc++, libgcc, libgomp, winpthread) into the
+    # executables so an older MinGW earlier on PATH cannot supply mismatched
+    # DLLs such as libstdc++-6.dll at startup.
+    if(MINGW)
+        target_link_options(${target_name} PRIVATE -static)
     endif()
 endforeach()
 

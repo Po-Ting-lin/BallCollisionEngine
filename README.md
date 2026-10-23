@@ -80,6 +80,10 @@ Build and run the automated physics tests:
 Benchmark methodology and recorded results are documented in
 [`throughput.md`](throughput.md).
 
+MinGW builds link the GCC runtime statically (`-static`), so the executables do
+not load `libstdc++-6.dll`, `libgomp-1.dll`, or `libwinpthread-1.dll` from an
+older MinGW that may be earlier on `PATH`.
+
 ## Runtime Configuration
 
 Edit [`config.ini`](config.ini) to change the initial scene without recompiling:
