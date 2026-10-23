@@ -6,6 +6,31 @@
 #include <stdexcept>
 #include <string>
 
+namespace {
+	bool hasConsole = true;
+
+	// A double-clicked console program gets a console window of its own.
+	// Release it so only the game window stays open; keep it when started
+	// from a terminal, which shares its console with this process.
+	void releaseOwnConsole() {
+#ifdef _WIN32
+		DWORD processes[2];
+		if (GetConsoleProcessList(processes, 2) == 1) {
+			FreeConsole();
+			hasConsole = false;
+		}
+#endif
+	}
+
+	void reportError(const std::string& message) {
+		std::cerr << message << '\n';
+#ifdef _WIN32
+		if (!hasConsole)
+			MessageBoxA(nullptr, message.c_str(), "BallCollision", MB_ICONERROR | MB_OK);
+#endif
+	}
+}
+
 int main(int argc, char* argv[])
 {
 	try {
@@ -16,14 +41,15 @@ int main(int argc, char* argv[])
 				/ "config.ini";
 		}
 
-		AppConfig config = LoadAppConfig(configPath);
+		bool frameBenchmark = false;
+		std::filesystem::path frameBenchmarkOutput;
 		for (int index = 1; index < argc; ++index) {
 			const std::string argument = argv[index];
 			if (argument == "--frame-benchmark") {
-				config.frameBenchmark = true;
+				frameBenchmark = true;
 				if (index + 1 < argc
 					&& std::string(argv[index + 1]).rfind("--", 0) != 0) {
-					config.frameBenchmarkOutput = argv[++index];
+					frameBenchmarkOutput = argv[++index];
 				}
 			}
 			else {
@@ -34,11 +60,18 @@ int main(int argc, char* argv[])
 			}
 		}
 
+		// the frame benchmark reports to the console
+		if (!frameBenchmark)
+			releaseOwnConsole();
+
+		AppConfig config = LoadAppConfig(configPath);
+		config.frameBenchmark = frameBenchmark;
+		config.frameBenchmarkOutput = frameBenchmarkOutput;
 		RunBallCollision(config);
 		return 0;
 	}
 	catch (const std::exception& error) {
-		std::cerr << "Configuration error: " << error.what() << '\n';
+		reportError(std::string("Configuration error: ") + error.what());
 		return 1;
 	}
 }

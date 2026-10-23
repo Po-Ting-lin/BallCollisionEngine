@@ -21,6 +21,20 @@ The compiler must include OpenMP support.
 If multiple MinGW-w64 installations are on `PATH`, the script selects the
 compiler with the highest reported GCC version.
 
+## Run by Double-Click
+
+Double-click `Run BallCollision.bat` in the repository root, or a shortcut to
+it. It builds the game first if `build\bin\BallCollision.exe` does not exist
+yet, then starts the game from the repository root, so it reads the root
+`config.ini` you edit. The console window closes right away; only the game
+window stays open.
+
+Double-clicking `build\bin\BallCollision.exe` directly also works, but it reads
+the copy of `config.ini` that the build placed next to the executable, which is
+refreshed only by the next build. When the executable owns its console (it was
+not started from a terminal), it releases it at startup, and configuration
+errors are shown in a message box.
+
 ## Build
 
 From PowerShell in the repository root:
