@@ -34,12 +34,10 @@ main
 Each ball stores:
 
 - Current position: `(x, y)`
-- Position at the beginning of the substep: `(sx, sy)`
 - Velocity: `(vx, vy)`
 - Acceleration: `(ax, ay)`
 - Radius: `r`
 - Mass: `10 * r`
-- Remaining substep time
 
 The mass model is an artistic choice. For a physically uniform 2D disk, mass
 would normally be proportional to `r^2`.
@@ -81,7 +79,6 @@ Each rendered frame is divided into four physics substeps:
 substep_dt = frame_dt / 4
 
 repeat 4 times:
-    set each ball's remaining time to substep_dt
     integrate acceleration, velocity, and position
     detect overlaps and correct positions
     resolve collision velocities
@@ -308,24 +305,6 @@ for i in [0, cell_size):
 
 Pairs across the four selected neighbor directions use the Cartesian product
 of the two cell buckets. No pair is intentionally emitted twice.
-
-## Remaining-Time Calculation
-
-After collision detection, the engine estimates how much of a ball's substep
-was consumed:
-
-```text
-intended_speed = length(velocity)
-actual_distance = length(position - substep_start_position)
-actual_time = actual_distance / intended_speed
-remaining_time -= actual_time
-```
-
-However, the engine does not perform another integration or collision pass
-using this remaining time. The value is reset at the next substep, so this is
-currently an incomplete continuous-collision mechanism.
-
-Zero intended speed is guarded and sets remaining time to zero.
 
 ## User Interaction
 

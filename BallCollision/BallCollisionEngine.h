@@ -110,7 +110,7 @@ private:
 	void _createRandomPattern();
 	void _createCircleClusterPattern();
 	void _createRectangleClusterPattern();
-	void _updatePositionByVelocity(float& fElapsedTime);
+	void _updatePositionByVelocity(float deltaTime);
 	void _resolveBoundaryCollision(Ball& ball) const;
 	void _resolveBoundaryCollisions();
 	void _staticCollision(PhysicsMetrics* metrics);
@@ -118,7 +118,6 @@ private:
 	void _buildSpatialGrid();
 	std::uint64_t _resolveGridCollisions();
 	void _resolveBallPair(std::size_t firstIndex, std::size_t secondIndex);
-	void _updateRemainingTimes();
 	std::uint64_t _dynamicCollision();
 };
 

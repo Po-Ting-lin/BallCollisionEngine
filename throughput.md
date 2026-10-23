@@ -89,7 +89,6 @@ when small balls produce many mostly empty cells.
 The headless benchmark measures four physics phases:
 
 1. **Integration**
-   - Set per-ball substep time.
    - Calculate attraction and damping.
    - Update velocity and position.
    - Wrap positions and clamp small velocities.
@@ -102,7 +101,6 @@ The headless benchmark measures four physics phases:
    - Test circle overlap.
    - Correct overlapping positions.
    - Record collision pairs.
-   - Update the existing remaining-time value.
 4. **Impulse response**
    - Apply elastic response to approaching collision pairs.
    - Clear collision and temporary-line-collider storage.
@@ -294,6 +292,35 @@ Run only the interactive application:
 The benchmark source is `BallCollision/Benchmark.cpp`. Phase timing is enabled
 only when a `PhysicsMetrics` object is passed; the interactive update path does
 not call the timing clock.
+
+## Dead-Work Removal and Rendering Follow-Up
+
+The per-ball remaining-time estimate cost two square roots per ball per
+substep, but its result was overwritten before it was ever used. It was
+removed together with the `sx`, `sy`, and `remainingTime` fields, shrinking
+`Ball` from 52 to 40 bytes. Contact counts are unchanged, so behavior is
+identical.
+
+Physics medians on a 2-core Linux VM with GCC 11.4 (single run, so treat as
+indicative):
+
+| Scenario | Balls | Before ms/frame | After ms/frame |
+|:---|---:|---:|---:|
+| Controlled | 2,000 | 0.567 | 0.538 |
+| Grid scale | 5,000 | 2.527 | 2.307 |
+| Small-radius grid | 5,000 | 0.899 | 0.781 |
+
+Rendering changes, measured with a standalone 1920x1080 replica of the
+pixel-engine draw path (8,000 balls, radii 2–3):
+
+| Step | Before | After |
+|:---|---:|---:|
+| Screen clear | `FillRect`, ~8.2 ms | `Clear()`, ~0.1 ms |
+| Ball drawing | `FillCircle`, ~1.1 ms | `_fillCircleFast`, ~0.3 ms |
+
+`FillRect` called `Draw()` for every pixel in column-major order, which is
+both branch-heavy and cache-hostile. The in-app profiler is the reference
+for real numbers on the target machine.
 
 ## Next Optimization Priorities
 

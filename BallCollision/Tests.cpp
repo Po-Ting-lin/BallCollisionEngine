@@ -20,8 +20,6 @@ namespace {
 		ball.id = id;
 		ball.x = x;
 		ball.y = y;
-		ball.sx = x;
-		ball.sy = y;
 		ball.vx = velocityX;
 		ball.vy = velocityY;
 		ball.r = radius;

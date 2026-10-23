@@ -65,15 +65,12 @@ namespace {
 			ball.id = static_cast<int>(index);
 			ball.x = xDistribution(generator);
 			ball.y = yDistribution(generator);
-			ball.sx = ball.x;
-			ball.sy = ball.y;
 			ball.vx = 0.0f;
 			ball.vy = 0.0f;
 			ball.ax = 0.0f;
 			ball.ay = 0.0f;
 			ball.r = radius;
 			ball.mass = 10.0f * radius;
-			ball.remainingTime = 0.0f;
 			ball.color = 0.0f;
 		}
 	}

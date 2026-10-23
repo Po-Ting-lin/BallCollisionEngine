@@ -324,11 +324,7 @@ void BallCollisionEngine::_update(float& fElapsedTime, PhysicsMetrics* metrics) 
 		if (metrics)
 			phaseStart = Clock::now();
 
-		// Set all balls time to maximum for this epoch
-		for (auto& ball : Balls)
-			ball.remainingTime = simElapsedTime;
-
-		_updatePositionByVelocity(fElapsedTime);
+		_updatePositionByVelocity(simElapsedTime);
 
 		if (metrics) {
 			metrics->integrationSeconds += std::chrono::duration<double>(
@@ -357,82 +353,79 @@ void BallCollisionEngine::_update(float& fElapsedTime, PhysicsMetrics* metrics) 
 	}
 }
 
-void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
+void BallCollisionEngine::_updatePositionByVelocity(float deltaTime) {
+	if (deltaTime <= 0.0f)
+		return;
+
 	const int ballCount = static_cast<int>(Balls.size());
 #pragma omp parallel for if(ballCount >= 4096)
 	for (int i = 0; i < ballCount; i++)
 	{
-		if (Balls[i].remainingTime > 0) {
-			// start position
-			Balls[i].sx = Balls[i].x;
-			Balls[i].sy = Balls[i].y;
+		float dx = 0.0f;
+		float dy = 0.0f;
 
-			float dx = 0.0f;
-			float dy = 0.0f;
-
-			switch (_gravity)
-			{
-			case Gravity::None:
-				break;
-			case Gravity::Normal:
-				dx = 0.0f;
-				dy = 300.0f;
-				break;
-			case Gravity::Center:
-				dx = _screenWidth / 2 - Balls[i].x;
-				dy = _screenHeight / 2 - Balls[i].y;
-				break;
-			case Gravity::Bicenter:
-				if (Balls[i].x < _screenWidth / 2) {
-					dx = _screenWidth * 0.25f - Balls[i].x;
-					dy = _screenHeight * 0.5f - Balls[i].y;
-				}
-				else {
-					dx = _screenWidth * 0.75f - Balls[i].x;
-					dy = _screenHeight * 0.5f - Balls[i].y;
-				}
-				break;
-			default:
-				break;
+		switch (_gravity)
+		{
+		case Gravity::None:
+			break;
+		case Gravity::Normal:
+			dx = 0.0f;
+			dy = 300.0f;
+			break;
+		case Gravity::Center:
+			dx = _screenWidth / 2 - Balls[i].x;
+			dy = _screenHeight / 2 - Balls[i].y;
+			break;
+		case Gravity::Bicenter:
+			if (Balls[i].x < _screenWidth / 2) {
+				dx = _screenWidth * 0.25f - Balls[i].x;
+				dy = _screenHeight * 0.5f - Balls[i].y;
 			}
-
-			// Add Drag to emulate rolling friction
-			Balls[i].ax =
-				-Balls[i].vx * _velocityDrag + _gravityStrength * dx;
-			Balls[i].ay =
-				-Balls[i].vy * _velocityDrag + _gravityStrength * dy;
-
-			if (_mouseForceStrength != 0.0f && _mouseForceRadius > 0.0f) {
-				const float mouseDx = _mouseForceX - Balls[i].x;
-				const float mouseDy = _mouseForceY - Balls[i].y;
-				const float mouseDistanceSquared =
-					mouseDx * mouseDx + mouseDy * mouseDy;
-				if (mouseDistanceSquared < _mouseForceRadius * _mouseForceRadius
-					&& mouseDistanceSquared > 1.0f) {
-					const float mouseDistance = std::sqrt(mouseDistanceSquared);
-					const float falloff =
-						1.0f - mouseDistance / _mouseForceRadius;
-					const float scale =
-						_mouseForceStrength * falloff / mouseDistance;
-					Balls[i].ax += mouseDx * scale;
-					Balls[i].ay += mouseDy * scale;
-				}
+			else {
+				dx = _screenWidth * 0.75f - Balls[i].x;
+				dy = _screenHeight * 0.5f - Balls[i].y;
 			}
+			break;
+		default:
+			break;
+		}
 
-			// Update ball physics
-			Balls[i].vx += Balls[i].ax * Balls[i].remainingTime;
-			Balls[i].vy += Balls[i].ay * Balls[i].remainingTime;
-			Balls[i].x += Balls[i].vx * Balls[i].remainingTime;
-			Balls[i].y += Balls[i].vy * Balls[i].remainingTime;
+		// Add Drag to emulate rolling friction
+		Balls[i].ax =
+			-Balls[i].vx * _velocityDrag + _gravityStrength * dx;
+		Balls[i].ay =
+			-Balls[i].vy * _velocityDrag + _gravityStrength * dy;
 
-			_resolveBoundaryCollision(Balls[i]);
-
-			// Clamp velocity near zero
-			if (std::fabs(Balls[i].vx * Balls[i].vx + Balls[i].vy * Balls[i].vy) < _minVelocity)
-			{
-				Balls[i].vx = 0;
-				Balls[i].vy = 0;
+		if (_mouseForceStrength != 0.0f && _mouseForceRadius > 0.0f) {
+			const float mouseDx = _mouseForceX - Balls[i].x;
+			const float mouseDy = _mouseForceY - Balls[i].y;
+			const float mouseDistanceSquared =
+				mouseDx * mouseDx + mouseDy * mouseDy;
+			if (mouseDistanceSquared < _mouseForceRadius * _mouseForceRadius
+				&& mouseDistanceSquared > 1.0f) {
+				const float mouseDistance = std::sqrt(mouseDistanceSquared);
+				const float falloff =
+					1.0f - mouseDistance / _mouseForceRadius;
+				const float scale =
+					_mouseForceStrength * falloff / mouseDistance;
+				Balls[i].ax += mouseDx * scale;
+				Balls[i].ay += mouseDy * scale;
 			}
+		}
+
+		// Update ball physics
+		Balls[i].vx += Balls[i].ax * deltaTime;
+		Balls[i].vy += Balls[i].ay * deltaTime;
+		Balls[i].x += Balls[i].vx * deltaTime;
+		Balls[i].y += Balls[i].vy * deltaTime;
+
+		_resolveBoundaryCollision(Balls[i]);
+
+		// Clamp velocity near zero
+		if (std::fabs(Balls[i].vx * Balls[i].vx + Balls[i].vy * Balls[i].vy) < _minVelocity)
+		{
+			Balls[i].vx = 0;
+			Balls[i].vy = 0;
 		}
 	}
 }
@@ -506,7 +499,6 @@ void BallCollisionEngine::_staticCollision(PhysicsMetrics* metrics) {
 	}
 
 	const std::uint64_t pairChecks = _resolveGridCollisions();
-	_updateRemainingTimes();
 
 	if (metrics) {
 		const std::uint64_t ballCount = Balls.size();
@@ -781,24 +773,6 @@ void BallCollisionEngine::_resolveBallPair(
 	}
 
 	_collisionList.push_back({ &first, &second });
-}
-
-void BallCollisionEngine::_updateRemainingTimes() {
-	constexpr float SpeedEpsilon = 1.0e-8f;
-
-	for (auto& ball : Balls) {
-		float intendedSpeedSquared =
-			ball.vx * ball.vx + ball.vy * ball.vy;
-		if (intendedSpeedSquared <= SpeedEpsilon) {
-			ball.remainingTime = 0.0f;
-			continue;
-		}
-
-		float fIntendedSpeed = std::sqrt(intendedSpeedSquared);
-		float fActualDistance = std::sqrt((ball.x - ball.sx) * (ball.x - ball.sx) + (ball.y - ball.sy) * (ball.y - ball.sy));
-		float fActualTime = fActualDistance / fIntendedSpeed;
-		ball.remainingTime -= fActualTime;
-	}
 }
 
 std::uint64_t BallCollisionEngine::_dynamicCollision() {
