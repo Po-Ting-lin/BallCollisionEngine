@@ -188,6 +188,15 @@ AppConfig LoadAppConfig(const std::filesystem::path& path) {
 		else if (key == "velocity_drag") {
 			config.velocityDrag = parseFloat(value, key, lineNumber);
 		}
+		else if (key == "mouse_force_strength") {
+			config.mouseForceStrength = parseFloat(value, key, lineNumber);
+		}
+		else if (key == "mouse_force_radius") {
+			config.mouseForceRadius = parseFloat(value, key, lineNumber);
+		}
+		else if (key == "wall_radius") {
+			config.wallRadius = parseFloat(value, key, lineNumber);
+		}
 		else if (key == "pattern_mode") {
 			config.spawnPattern = parseSpawnPattern(value, lineNumber);
 		}
@@ -225,6 +234,22 @@ AppConfig LoadAppConfig(const std::filesystem::path& path) {
 		throw std::runtime_error(
 			"velocity_drag must be zero or greater."
 		);
+	}
+
+	if (!std::isfinite(config.mouseForceStrength)
+		|| config.mouseForceStrength < 0.0f) {
+		throw std::runtime_error(
+			"mouse_force_strength must be zero or greater."
+		);
+	}
+	if (!std::isfinite(config.mouseForceRadius)
+		|| config.mouseForceRadius <= 0.0f) {
+		throw std::runtime_error(
+			"mouse_force_radius must be greater than zero."
+		);
+	}
+	if (!std::isfinite(config.wallRadius) || config.wallRadius <= 0.0f) {
+		throw std::runtime_error("wall_radius must be greater than zero.");
 	}
 
 	return config;

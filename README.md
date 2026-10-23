@@ -21,6 +21,20 @@ The compiler must include OpenMP support.
 If multiple MinGW-w64 installations are on `PATH`, the script selects the
 compiler with the highest reported GCC version.
 
+## Run by Double-Click
+
+Double-click `Run BallCollision.bat` in the repository root, or a shortcut to
+it. It builds the game first if `build\bin\BallCollision.exe` does not exist
+yet, then starts the game from the repository root, so it reads the root
+`config.ini` you edit. The console window closes right away; only the game
+window stays open.
+
+Double-clicking `build\bin\BallCollision.exe` directly also works, but it reads
+the copy of `config.ini` that the build placed next to the executable, which is
+refreshed only by the next build. When the executable owns its console (it was
+not started from a terminal), it releases it at startup, and configuration
+errors are shown in a message box.
+
 ## Build
 
 From PowerShell in the repository root:
@@ -71,6 +85,21 @@ Run the headless physics throughput benchmark:
 .\build.ps1 -Benchmark
 ```
 
+Run the full-frame benchmark of the real application, including GPU rendering:
+
+```powershell
+.\build.ps1 -FrameBenchmark
+```
+
+This builds Release and runs `BallCollision.exe --frame-benchmark
+build\frame_benchmark.csv`. The app opens its normal window and plays five
+fixed scenes back to back (2,000 / 8,000 / 20,000 random balls with center
+gravity, 8,000 balls inside eight walls, then the `config.ini` scene) with a
+fixed 1/60 s simulation step and input disabled. It prints a Markdown table per
+scene to the console, including heap allocations per frame, writes one CSV row
+per scene, and exits by itself. The executable can also be run
+directly: `BallCollision.exe --frame-benchmark [output.csv]`.
+
 Build and run the automated physics tests:
 
 ```powershell
@@ -79,6 +108,10 @@ Build and run the automated physics tests:
 
 Benchmark methodology and recorded results are documented in
 [`throughput.md`](throughput.md).
+
+MinGW builds link the GCC runtime statically (`-static`), so the executables do
+not load `libstdc++-6.dll`, `libgomp-1.dll`, or `libwinpthread-1.dll` from an
+older MinGW that may be earlier on `PATH`.
 
 ## Runtime Configuration
 
@@ -93,6 +126,9 @@ gravity = none
 gravity_strength = 1.2
 velocity_drag = 0.8
 num_balls = 3000
+mouse_force_strength = 4000.0
+mouse_force_radius = 200.0
+wall_radius = 4.0
 ```
 
 Radius bounds are inclusive. Set `ball_radius_min` and `ball_radius_max` to the
@@ -107,6 +143,9 @@ case-insensitive and selects the initial mode. `gravity_strength` scales the
 acceleration of the other three modes; `0` disables their gravitational force,
 while `1.2` preserves the original behavior. `velocity_drag` controls velocity
 damping independently of gravity. Set it to `0` for space-like coasting.
+`mouse_force_strength` is the `Q` / `E` acceleration at the cursor, fading to
+zero at `mouse_force_radius` pixels. `wall_radius` sets the thickness of drawn
+walls.
 
 The build copies the configuration file beside the executable. Running through
 `.\build.ps1 -Run` reads the root copy shown above.
@@ -116,14 +155,17 @@ The build copies the configuration file beside the executable. Running through
 The top-left overlay reports smoothed frame time and these CPU phases:
 
 - Physics simulation
-- Full-screen clear
-- Ball rasterization
-- Lines and UI drawing
-- `Present+`, the remaining frame time after the four measured phases
+- Ball geometry: building the vertex array for every ball
+- Lines and UI: wall geometry, helper lines, and the HUD text texture
+- `Present+`, the remaining frame time after the three measured phases
 
-`Present+` includes pixel-engine input handling, framebuffer upload, OpenGL
-presentation, and other small frame-loop costs. Measurements are smoothed for
-readability.
+Everything is drawn on the GPU. A custom render function on layer 0 sends all
+balls and walls to OpenGL as one batch of textured quads, so the 1920x1080 CPU
+framebuffer is no longer uploaded every frame. `Present+` therefore covers
+pixel-engine input handling, the OpenGL draw calls, buffer presentation, and
+other small frame-loop costs. The frame benchmark (`-FrameBenchmark`) splits
+the GPU draw time out of `Present+` by calling `glFinish()` at the end of the
+render function and timing it.
 
 ## Manual CMake Build
 
@@ -144,6 +186,12 @@ OpenMP configuration, and Linux dependencies.
 - Hold the left mouse button on a ball to drag it.
 - Press and release the right mouse button on a ball to launch it away from the
   mouse cursor.
+- Right-drag on empty space to draw a wall. Middle-click a wall to delete it,
+  or press `C` to clear every wall. Left-drag a wall end to move it.
+- Hold `Q` to pull nearby balls toward the cursor, or `E` to push them away.
+- Press `P` or `Space` to pause, `-` / `=` to halve or double the simulation
+  speed (1/16x to 2x), and `0` to return to 1x.
+- Press `R` to respawn the balls. Walls are kept.
 
 ## Third-Party Component
 

@@ -13,7 +13,14 @@ struct AppConfig {
 	Gravity gravity = Gravity::None;
 	float gravityStrength = 1.2f;
 	float velocityDrag = 0.8f;
+	float mouseForceStrength = 4000.0f;
+	float mouseForceRadius = 200.0f;
+	float wallRadius = 4.0f;
 	SpawnPattern spawnPattern = SpawnPattern::Random;
+
+	// Set from the command line, not from config.ini.
+	bool frameBenchmark = false;
+	std::filesystem::path frameBenchmarkOutput;
 };
 
 AppConfig LoadAppConfig(const std::filesystem::path& path);

@@ -6,6 +6,9 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <vector>
+
+#include <omp.h>
 
 namespace {
 	Ball makeBall(
@@ -20,8 +23,6 @@ namespace {
 		ball.id = id;
 		ball.x = x;
 		ball.y = y;
-		ball.sx = x;
-		ball.sy = y;
 		ball.vx = velocityX;
 		ball.vy = velocityY;
 		ball.r = radius;
@@ -555,6 +556,139 @@ namespace {
 			"gravity should cycle none, normal, center, bicenter, none"
 		);
 	}
+
+	bool testMouseForcePullsAndPushes() {
+		BallCollisionEngine engine(
+			400, 400, 0, 2, 2, Gravity::None, 0.0f, 0.0f
+		);
+		engine.Balls.push_back(makeBall(0, 150.0f, 200.0f, 2.0f));
+		engine.Balls.push_back(makeBall(1, 300.0f, 200.0f, 2.0f));
+		engine.SetMouseForce(200.0f, 200.0f, 1000.0f, 100.0f);
+
+		float elapsedTime = 0.02f;
+		engine.Update(elapsedTime);
+		const bool pulled = engine.Balls[0].vx > 0.0f;
+		const bool outsideUntouched = engine.Balls[1].vx == 0.0f;
+
+		engine.Balls[0] = makeBall(0, 150.0f, 200.0f, 2.0f);
+		engine.SetMouseForce(200.0f, 200.0f, -1000.0f, 100.0f);
+		engine.Update(elapsedTime);
+		const bool pushed = engine.Balls[0].vx < 0.0f;
+
+		engine.Balls[0] = makeBall(0, 150.0f, 200.0f, 2.0f);
+		engine.ClearMouseForce();
+		engine.Update(elapsedTime);
+		const bool cleared = engine.Balls[0].vx == 0.0f;
+
+		return require(pulled, "positive mouse force should pull balls")
+			&& require(pushed, "negative mouse force should push balls")
+			&& require(
+				outsideUntouched,
+				"mouse force should not affect balls outside its radius"
+			)
+			&& require(cleared, "cleared mouse force should do nothing");
+	}
+
+	bool testLinesCanBeAddedAndRemoved() {
+		BallCollisionEngine engine(400, 400, 0);
+		engine.AddLine(100.0f, 100.0f, 300.0f, 100.0f, 4.0f);
+		engine.AddLine(100.0f, 300.0f, 300.0f, 300.0f, 4.0f);
+
+		const bool missIgnored = !engine.RemoveLineAt(200.0f, 200.0f, 4.0f)
+			&& engine.Lines.size() == 2;
+		const bool hitRemoved = engine.RemoveLineAt(200.0f, 305.0f, 4.0f)
+			&& engine.Lines.size() == 1
+			&& engine.Lines[0].sy == 100.0f;
+		engine.ClearLines();
+
+		return require(missIgnored, "removing away from a line should miss")
+			&& require(hitRemoved, "removing near a line should erase it")
+			&& require(engine.Lines.empty(), "ClearLines should remove all");
+	}
+
+	bool testBallsBounceOffWalls() {
+		BallCollisionEngine engine(
+			400, 400, 0, 2, 2, Gravity::None, 0.0f, 0.0f
+		);
+		engine.AddLine(200.0f, 100.0f, 200.0f, 300.0f, 4.0f);
+		// several simultaneous contacts exercise the fake-ball storage
+		for (int index = 0; index < 16; ++index) {
+			engine.Balls.push_back(makeBall(
+				index,
+				194.5f,
+				110.0f + index * 10.0f,
+				2.0f,
+				50.0f
+			));
+		}
+
+		float elapsedTime = 1.0f / 60.0f;
+		engine.Update(elapsedTime);
+
+		bool allBounced = true;
+		bool allClear = true;
+		for (const Ball& ball : engine.Balls) {
+			allBounced = allBounced && std::isfinite(ball.vx) && ball.vx < 0.0f;
+			allClear = allClear && ball.x + ball.r <= 196.0f + 1.0e-3f;
+		}
+
+		return require(
+			allBounced,
+			"balls moving into a wall should be reflected away from it"
+		) && require(
+			allClear,
+			"wall contact should push balls out of the wall"
+		);
+	}
+
+	// The collision bands must be race-free: any thread count has to produce
+	// exactly the same state as one thread.
+	bool testParallelCollisionMatchesSingleThread() {
+		auto run = [](int threads) {
+			omp_set_num_threads(threads);
+			std::srand(4321);
+			BallCollisionEngine engine(
+				1920, 1080, 6'000, 2, 3, Gravity::Center, 1.2f, 0.8f
+			);
+			engine.Create();
+			engine.AddLine(600.0f, 300.0f, 1300.0f, 300.0f, 4.0f);
+			for (int frame = 0; frame < 30; ++frame) {
+				float elapsedTime = 1.0f / 60.0f;
+				engine.Update(elapsedTime);
+			}
+			return engine.Balls;
+		};
+
+		const int defaultThreads = omp_get_max_threads();
+		const std::vector<Ball> single = run(1);
+		const std::vector<Ball> multiple = run(std::max(2, defaultThreads));
+		omp_set_num_threads(defaultThreads);
+
+		bool identical = single.size() == multiple.size();
+		for (std::size_t index = 0; identical && index < single.size(); ++index) {
+			identical = single[index].x == multiple[index].x
+				&& single[index].y == multiple[index].y
+				&& single[index].vx == multiple[index].vx
+				&& single[index].vy == multiple[index].vy;
+		}
+		return require(
+			identical,
+			"parallel collision bands should match a single thread exactly"
+		);
+	}
+
+	bool testResetRespawnsConfiguredBalls() {
+		BallCollisionEngine engine(400, 400, 25);
+		engine.Create();
+		engine.Balls.pop_back();
+		engine.AddLine(10.0f, 10.0f, 50.0f, 10.0f, 4.0f);
+		engine.Reset();
+
+		return require(
+			engine.Balls.size() == 25,
+			"Reset should respawn the configured ball count"
+		) && require(engine.Lines.size() == 1, "Reset should keep walls");
+	}
 }
 
 int main() {
@@ -576,6 +710,11 @@ int main() {
 	passed = testCollisionCorrectionCannotPushBallOutsideBoundary() && passed;
 	passed = testGravityStrengthControlsAcceleration() && passed;
 	passed = testGravityCyclesInConfiguredOrder() && passed;
+	passed = testMouseForcePullsAndPushes() && passed;
+	passed = testLinesCanBeAddedAndRemoved() && passed;
+	passed = testBallsBounceOffWalls() && passed;
+	passed = testParallelCollisionMatchesSingleThread() && passed;
+	passed = testResetRespawnsConfiguredBalls() && passed;
 
 	if (!passed)
 		return EXIT_FAILURE;

@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include <cmath>
-#include <deque>
 #include <vector>
 #include <omp.h>
 #include "Gravity.h"
@@ -42,18 +41,49 @@ public:
 	void Update(float& fElapsedTime, PhysicsMetrics& metrics);
 	void CycleGravity();
 	Gravity GetGravity() const;
+	void Reset();
+	void AddLine(float sx, float sy, float ex, float ey, float radius);
+	bool RemoveLineAt(float x, float y, float tolerance);
+	void ClearLines();
+	void SetMouseForce(float x, float y, float strength, float radius);
+	void ClearMouseForce();
 
 	std::vector<Ball> Balls;
 	std::vector<Line> Lines;
 private:
-	std::deque<Ball> _fakeBalls;
-	std::vector<std::pair<Ball*, Ball*>> _collisionList;
-	std::vector<std::size_t> _gridCellCounts;
-	std::vector<std::size_t> _gridCellOffsets;
-	std::vector<std::size_t> _gridCellWriteOffsets;
-	std::vector<std::size_t> _gridBallCells;
-	std::vector<std::size_t> _gridBallIndices;
-	std::vector<std::size_t> _activeGridCells;
+	// The fields the narrow phase reads and writes, copied out of Balls in
+	// packed grid-cell order so each cell's balls are contiguous in memory.
+	// Results are copied back to Balls at the end of every substep.
+	struct CellBall {
+		float x, y;
+		float vx, vy;
+		float r;
+		float mass;
+		std::uint32_t index; // position in Balls
+	};
+
+	std::vector<CellBall> _cellBalls;
+	// Contacts found and impulses applied in the current substep, for metrics.
+	std::uint64_t _substepContacts;
+	std::uint64_t _substepImpulses;
+	// 32-bit grid indices halve the memory traffic of the grid arrays.
+	std::vector<std::uint32_t> _gridCellCounts;
+	std::vector<std::uint32_t> _gridCellOffsets;
+	std::vector<std::uint32_t> _gridBallCells;
+	std::vector<std::uint32_t> _gridBallRows;
+	std::vector<std::uint32_t> _gridSortScratch;
+	std::vector<std::uint32_t> _gridColumnStarts;
+	std::vector<std::uint32_t> _gridRowStarts;
+	std::vector<std::uint32_t> _gridBallIndices;
+	std::vector<std::uint32_t> _activeGridCells;
+	// Index into _activeGridCells of the first active cell of each row.
+	std::vector<std::uint32_t> _activeRowStarts;
+	// First grid row of each collision band, then the row count.
+	std::vector<int> _bandFirstRows;
+	// Candidate checks in the previous substep, to decide on going parallel.
+	std::uint64_t _lastPairChecks;
+	// Largest ball radius, found during integration every substep.
+	float _maximumBallRadiusThisSubstep;
 	int _ballNum;
 	int _screenWidth;
 	int _screenHeight;
@@ -66,6 +96,10 @@ private:
 	float _gridCellSize;
 	float _gravityStrength;
 	float _velocityDrag;
+	float _mouseForceX;
+	float _mouseForceY;
+	float _mouseForceStrength;
+	float _mouseForceRadius;
 	Gravity _gravity;
 	SpawnPattern _spawnPattern;
 
@@ -100,15 +134,64 @@ private:
 	void _createRandomPattern();
 	void _createCircleClusterPattern();
 	void _createRectangleClusterPattern();
-	void _updatePositionByVelocity(float& fElapsedTime);
-	void _resolveBoundaryCollision(Ball& ball) const;
+	void _updatePositionByVelocity(float deltaTime);
 	void _resolveBoundaryCollisions();
 	void _staticCollision(PhysicsMetrics* metrics);
 	void _resolveLineCollisions();
 	void _buildSpatialGrid();
+	void _gatherCellBalls();
+	void _scatterCellBalls();
+	struct ContactCounters {
+		std::uint64_t pairChecks = 0;
+		std::uint64_t contacts = 0;
+		std::uint64_t impulses = 0;
+	};
+
 	std::uint64_t _resolveGridCollisions();
-	void _resolveBallPair(std::size_t firstIndex, std::size_t secondIndex);
-	void _updateRemainingTimes();
-	std::uint64_t _dynamicCollision();
+	void _resolveGridRows(int firstRow, int endRow, ContactCounters& counters);
+	void _resolveBallPair(
+		std::size_t firstSlot,
+		std::size_t secondSlot,
+		ContactCounters& counters
+	);
+
+	// Used for both Ball and CellBall.
+	template <typename BallType>
+	void _resolveBoundaryCollision(BallType& ball) const {
+		const float minimumX = ball.r;
+		const float maximumX = static_cast<float>(_screenWidth) - ball.r;
+		const float minimumY = ball.r;
+		const float maximumY = static_cast<float>(_screenHeight) - ball.r;
+
+		if (minimumX >= maximumX) {
+			ball.x = _screenWidth * 0.5f;
+			ball.vx = 0.0f;
+		}
+		else if (ball.x <= minimumX) {
+			ball.x = minimumX;
+			if (ball.vx < 0.0f)
+				ball.vx = -ball.vx;
+		}
+		else if (ball.x >= maximumX) {
+			ball.x = maximumX;
+			if (ball.vx > 0.0f)
+				ball.vx = -ball.vx;
+		}
+
+		if (minimumY >= maximumY) {
+			ball.y = _screenHeight * 0.5f;
+			ball.vy = 0.0f;
+		}
+		else if (ball.y <= minimumY) {
+			ball.y = minimumY;
+			if (ball.vy < 0.0f)
+				ball.vy = -ball.vy;
+		}
+		else if (ball.y >= maximumY) {
+			ball.y = maximumY;
+			if (ball.vy > 0.0f)
+				ball.vy = -ball.vy;
+		}
+	}
 };
 

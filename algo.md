@@ -34,12 +34,10 @@ main
 Each ball stores:
 
 - Current position: `(x, y)`
-- Position at the beginning of the substep: `(sx, sy)`
 - Velocity: `(vx, vy)`
 - Acceleration: `(ax, ay)`
 - Radius: `r`
 - Mass: `10 * r`
-- Remaining substep time
 
 The mass model is an artistic choice. For a physically uniform 2D disk, mass
 would normally be proportional to `r^2`.
@@ -81,10 +79,9 @@ Each rendered frame is divided into four physics substeps:
 substep_dt = frame_dt / 4
 
 repeat 4 times:
-    set each ball's remaining time to substep_dt
     integrate acceleration, velocity, and position
-    detect overlaps and correct positions
-    resolve collision velocities
+    detect overlaps, correct positions, and apply impulses
+    clamp balls to the screen
 ```
 
 Substeps reduce numerical error and make tunneling less likely, but collision
@@ -188,9 +185,19 @@ cell size is set to the largest current ball diameter. Each ball is inserted
 into the cell containing its center.
 
 The grid uses packed flat arrays. Rebuilding it resets counters only for cells
-that were active in the previous substep, counts the new occupants, and packs
-ball indices into one contiguous array. Collision traversal iterates only the
-active-cell list, so empty cells are neither cleared nor scanned.
+that were active in the previous substep. Two stable counting-sort passes, by
+column and then by row, pack ball indices in row-major cell order, so
+neighbouring cells are close together in memory. Balls in the same cell keep
+their `Balls` order. Collision traversal iterates only the active-cell list, so
+empty cells are neither cleared nor scanned.
+
+The narrow phase does not read `Balls` directly. After the grid is built, each
+ball's position, velocity, radius, mass, and `Balls` index are copied into a
+28-byte working record in packed cell order. Pair tests, positional
+correction, impulses, and boundary clamping run on these records, which are
+contiguous for each cell. Positions and velocities are copied back to `Balls`
+at the end of the substep. `Balls` keeps its order, so pointers held by the UI
+(for example the dragged ball) stay valid.
 
 Pairs are tested within the same cell and across four forward neighbors:
 
@@ -229,8 +236,8 @@ position1 += 0.5 * penetration * normal
 position2 -= 0.5 * penetration * normal
 ```
 
-This prevents balls from remaining visibly embedded before the velocity
-response is calculated.
+This prevents balls from remaining visibly embedded. The velocity response is
+applied immediately afterwards, in the same pair test.
 
 The correction uses one contact normal and moves both balls symmetrically.
 Coincident centers use a deterministic horizontal normal to avoid division by
@@ -238,8 +245,9 @@ zero.
 
 ## Dynamic Collision Response
 
-After positional correction, each recorded collision is resolved as a
-perfectly elastic collision along the contact normal.
+Right after positional correction, in the same pair test, the contact is
+resolved as a perfectly elastic collision along the contact normal. No
+collision list is kept, so each contact is read and written once.
 
 Let:
 
@@ -279,10 +287,10 @@ For each ball:
 3. Find the closest point on the segment.
 4. Test whether the distance to that point is at most `ball.r + line.r`.
 5. Correct the ball's position away from the line.
-6. Approximate a bounce by colliding the ball with a temporary fake ball at the
-   closest point.
+6. Approximate a bounce by colliding the ball with a stand-in ball at the
+   closest point, immediately.
 
-The fake ball is assigned:
+The stand-in ball is assigned:
 
 ```text
 radius = line.radius
@@ -292,8 +300,8 @@ velocity = -ball.velocity
 
 Line creation is commented out in the default scene.
 
-Temporary fake balls use stable `std::deque` storage until impulse resolution.
-Zero-length lines are ignored, and a ball centered exactly on its closest line
+The stand-in ball is never stored; only its mass and velocity enter the
+impulse formula. Zero-length lines are ignored, and a ball centered exactly on its closest line
 point receives a perpendicular fallback normal.
 
 ## Collision-Pair Traversal
@@ -308,24 +316,6 @@ for i in [0, cell_size):
 
 Pairs across the four selected neighbor directions use the Cartesian product
 of the two cell buckets. No pair is intentionally emitted twice.
-
-## Remaining-Time Calculation
-
-After collision detection, the engine estimates how much of a ball's substep
-was consumed:
-
-```text
-intended_speed = length(velocity)
-actual_distance = length(position - substep_start_position)
-actual_time = actual_distance / intended_speed
-remaining_time -= actual_time
-```
-
-However, the engine does not perform another integration or collision pass
-using this remaining time. The value is reset at the next substep, so this is
-currently an incomplete continuous-collision mechanism.
-
-Zero intended speed is guarded and sets remaining time to zero.
 
 ## User Interaction
 
@@ -347,10 +337,30 @@ there are at least 4,096 balls. Below that threshold, the loop runs serially
 because measured OpenMP dispatch and barrier overhead exceeds the integration
 work.
 
-Rendering is sequential because `FillCircle` writes into a shared
-olcPixelGameEngine pixel buffer.
+Rendering runs on the GPU through the OpenGL 1.x renderer. Each frame the CPU
+writes four vertices per ball into one array, and a custom render function on
+layer 0 draws the whole array with a single `glDrawArrays(GL_QUADS, ...)`.
+Every quad samples one white anti-aliased disc texture with a mip chain and is
+tinted by its vertex color. Walls, helper lines, and the mouse-force ring
+reuse the opaque centre of the same texture. The HUD and help bar are small
+CPU sprites uploaded as their own textures, so the full-screen framebuffer is
+never uploaded.
 
-Collision detection and response are sequential.
+Ball-ball collision detection and response run in parallel by row bands. The
+grid rows are split into up to 33 bands of at least two rows, with edges placed
+so each band holds about the same number of balls. A cell tests only its own
+row and the row below it, so a band touches its own rows plus the first row of
+the next band. All even bands therefore run in parallel without sharing a
+ball, then all odd bands. No locks are needed, and per-band contact counters
+are summed at the end.
+
+The band layout depends only on ball positions, and the serial path visits the
+bands in the same even-then-odd order, so results are bit-identical for any
+thread count. The parallel path is used only when the previous substep had at
+least 16,384 candidate checks; below that, starting an OpenMP team costs more
+than it saves. Ball-wall tests, the grid build, and the working-copy copies
+stay serial. Parallel copies were measured and were slower, even at 20,000
+balls.
 
 ## Complexity
 
@@ -360,7 +370,7 @@ Let:
 - `L` be the number of line segments
 - `G` be the number of grid cells
 - `P` be the number of grid-generated candidate pairs
-- `C` be the number of recorded collisions
+- `C` be the number of contacts
 - `S` be the number of substeps, currently 4
 
 The cost per frame is:
@@ -368,9 +378,8 @@ The cost per frame is:
 ```text
 Integration:             O(S * N)
 Grid rebuild:            O(S * (N + G))
-Ball-ball detection:     O(S * P)
+Ball-ball detection:     O(S * P), including the O(S * C) responses
 Ball-line detection:     O(S * N * L)
-Dynamic response:        O(S * C)
 ```
 
 Typical overall cost:
@@ -383,8 +392,8 @@ For a reasonably even distribution with bounded local density, `P` grows near
 linearly with `N`. The worst case remains `O(N^2)` if most balls occupy one cell
 or its immediate neighbors.
 
-Grid storage is `O(N + G)`. The collision list initially reserves `8 * N`
-entries and grows only if actual contacts require more.
+Grid storage and the working copy are `O(N + G)`. Contacts are resolved as they
+are found, so no per-contact storage is kept.
 
 Measured before/after results are recorded in [throughput.md](throughput.md).
 
