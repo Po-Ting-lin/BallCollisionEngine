@@ -80,8 +80,8 @@ substep_dt = frame_dt / 4
 
 repeat 4 times:
     integrate acceleration, velocity, and position
-    detect overlaps and correct positions
-    resolve collision velocities
+    detect overlaps, correct positions, and apply impulses
+    clamp balls to the screen
 ```
 
 Substeps reduce numerical error and make tunneling less likely, but collision
@@ -236,8 +236,8 @@ position1 += 0.5 * penetration * normal
 position2 -= 0.5 * penetration * normal
 ```
 
-This prevents balls from remaining visibly embedded before the velocity
-response is calculated.
+This prevents balls from remaining visibly embedded. The velocity response is
+applied immediately afterwards, in the same pair test.
 
 The correction uses one contact normal and moves both balls symmetrically.
 Coincident centers use a deterministic horizontal normal to avoid division by
@@ -245,8 +245,9 @@ zero.
 
 ## Dynamic Collision Response
 
-After positional correction, each recorded collision is resolved as a
-perfectly elastic collision along the contact normal.
+Right after positional correction, in the same pair test, the contact is
+resolved as a perfectly elastic collision along the contact normal. No
+collision list is kept, so each contact is read and written once.
 
 Let:
 
@@ -286,10 +287,10 @@ For each ball:
 3. Find the closest point on the segment.
 4. Test whether the distance to that point is at most `ball.r + line.r`.
 5. Correct the ball's position away from the line.
-6. Approximate a bounce by colliding the ball with a temporary fake ball at the
-   closest point.
+6. Approximate a bounce by colliding the ball with a stand-in ball at the
+   closest point, immediately.
 
-The fake ball is assigned:
+The stand-in ball is assigned:
 
 ```text
 radius = line.radius
@@ -299,9 +300,8 @@ velocity = -ball.velocity
 
 Line creation is commented out in the default scene.
 
-Temporary fake balls are stored in a `std::vector` that keeps its capacity
-across substeps; pointers to them are taken only after the line pass, when the
-vector no longer grows. Zero-length lines are ignored, and a ball centered exactly on its closest line
+The stand-in ball is never stored; only its mass and velocity enter the
+impulse formula. Zero-length lines are ignored, and a ball centered exactly on its closest line
 point receives a perpendicular fallback normal.
 
 ## Collision-Pair Traversal
@@ -356,7 +356,7 @@ Let:
 - `L` be the number of line segments
 - `G` be the number of grid cells
 - `P` be the number of grid-generated candidate pairs
-- `C` be the number of recorded collisions
+- `C` be the number of contacts
 - `S` be the number of substeps, currently 4
 
 The cost per frame is:
@@ -364,9 +364,8 @@ The cost per frame is:
 ```text
 Integration:             O(S * N)
 Grid rebuild:            O(S * (N + G))
-Ball-ball detection:     O(S * P)
+Ball-ball detection:     O(S * P), including the O(S * C) responses
 Ball-line detection:     O(S * N * L)
-Dynamic response:        O(S * C)
 ```
 
 Typical overall cost:
@@ -379,8 +378,8 @@ For a reasonably even distribution with bounded local density, `P` grows near
 linearly with `N`. The worst case remains `O(N^2)` if most balls occupy one cell
 or its immediate neighbors.
 
-Grid storage is `O(N + G)`. The collision list initially reserves `8 * N`
-entries and grows only if actual contacts require more.
+Grid storage and the working copy are `O(N + G)`. Contacts are resolved as they
+are found, so no per-contact storage is kept.
 
 Measured before/after results are recorded in [throughput.md](throughput.md).
 

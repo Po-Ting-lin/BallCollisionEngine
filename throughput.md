@@ -441,6 +441,7 @@ the other columns are `Physics` averages from `-FrameBenchmark`.
 |:---|---:|---:|---:|---:|---:|---:|
 | Before | 8.565 | 0.557 | 3.284 | 11.546 | 4.490 | 2.059 |
 | 1. Cell-ordered working copy | 7.854 | 0.513 | 3.006 | 10.169 | 4.088 | 2.072 |
+| 2. Impulse fused into pair test | 6.376 | 0.465 | 2.582 | 8.394 | 4.113 | 1.718 |
 
 Notes per step:
 
@@ -455,6 +456,17 @@ Notes per step:
    order, so results differ slightly. `config.ini` spawns balls row by row,
    so it already had good locality and does not change. Steady-state frames
    still make no heap allocations.
+2. **Impulse fused into the pair test.** Positional correction used to record
+   every contact in a collision list (about 120,000 entries per frame at
+   10,000 balls), and a second pass recomputed each distance and square root
+   to apply the impulse. The impulse is now applied right after the
+   correction, with the same normal and the same approach-only rule, and wall
+   contacts bounce immediately instead of through stored stand-in balls. The
+   headless response phase drops from 2.15 ms to 0.14 ms at 10,000 balls.
+   Impulses are applied in a different order, so results are not
+   bit-identical, but contact counts stay within 1% and no invalid states
+   appear. The wall scene does not improve, because testing every ball
+   against every wall dominates it.
 
 ## Next Optimization Priorities
 

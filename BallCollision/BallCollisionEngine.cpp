@@ -44,15 +44,15 @@ BallCollisionEngine::BallCollisionEngine(
 	_mouseForceY = 0.0f;
 	_mouseForceStrength = 0.0f;
 	_mouseForceRadius = 0.0f;
+	_substepContacts = 0;
+	_substepImpulses = 0;
 	_spawnPattern = spawnPattern;
 }
 
 BallCollisionEngine::~BallCollisionEngine() {
 	Balls.clear();
 	Lines.clear();
-	_fakeBalls.clear();
-	_lineContactBalls.clear();
-	_collisionList.clear();
+	_cellBalls.clear();
 	_gridCellCounts.clear();
 	_gridCellOffsets.clear();
 	_gridBallCells.clear();
@@ -86,7 +86,6 @@ void BallCollisionEngine::Create() {
 	//_addLine(30.0f, 30.0f, 30.0f, 920.0f, 4.0f);
 	//_addLine(1000.0f, 30.0f, 1000.0f, 920.0f, 4.0f);
 	//_addLine(30.0f, 920.0f, 1000.0f, 920.0f, 4.0f);
-	_collisionList.reserve(static_cast<std::size_t>(_ballNum) * 8);
 }
 
 void BallCollisionEngine::_createRandomPattern() {
@@ -334,19 +333,21 @@ void BallCollisionEngine::_update(float& fElapsedTime, PhysicsMetrics* metrics) 
 			phaseStart = Clock::now();
 		}
 
+		// Impulses are applied as contacts are found, inside _staticCollision.
+		_substepContacts = 0;
+		_substepImpulses = 0;
 		_staticCollision(metrics);
 
 		if (metrics) {
-			metrics->collisionPairs += _collisionList.size();
+			metrics->collisionPairs += _substepContacts;
+			metrics->impulsesApplied += _substepImpulses;
 			phaseStart = Clock::now();
 		}
 
-		const std::uint64_t impulsesApplied = _dynamicCollision();
 		_resolveBoundaryCollisions();
 		_scatterCellBalls();
 
 		if (metrics) {
-			metrics->impulsesApplied += impulsesApplied;
 			metrics->collisionResponseSeconds += std::chrono::duration<double>(
 				Clock::now() - phaseStart
 			).count();
@@ -520,21 +521,23 @@ void BallCollisionEngine::_resolveLineCollisions() {
 					normalY = line_vector_x / lineLength;
 				}
 
-				CellBall fakeball{};
-				fakeball.r = line.r;
-				fakeball.mass = ball.mass * 0.8f;
-				fakeball.x = closest_x;
-				fakeball.y = closest_y;
-				fakeball.vx = -ball.vx;
-				fakeball.vy = -ball.vy;
-				_fakeBalls.push_back(fakeball);
-				_lineContactBalls.push_back(
-					static_cast<std::size_t>(&ball - Balls.data())
-				);
-
 				float penetration = combinedRadius - distance;
 				ball.x += penetration * normalX;
 				ball.y += penetration * normalY;
+
+				// Bounce as if hitting a stand-in ball at the closest point
+				// with 0.8x this ball's mass and the opposite velocity.
+				const float wallMass = ball.mass * 0.8f;
+				const float relativeNormalVelocity =
+					2.0f * (normalX * ball.vx + normalY * ball.vy);
+				++_substepContacts;
+				if (relativeNormalVelocity < 0.0f && ball.mass + wallMass > 0.0f) {
+					const float p =
+						2.0f * relativeNormalVelocity / (ball.mass + wallMass);
+					ball.vx -= p * wallMass * normalX;
+					ball.vy -= p * wallMass * normalY;
+					++_substepImpulses;
+				}
 			}
 		}
 	}
@@ -548,7 +551,6 @@ void BallCollisionEngine::_buildSpatialGrid() {
 	if (Balls.empty()) {
 		_gridBallCells.clear();
 		_gridBallIndices.clear();
-		_gridBallSlots.clear();
 		return;
 	}
 
@@ -583,7 +585,6 @@ void BallCollisionEngine::_buildSpatialGrid() {
 	_gridBallRows.resize(ballCount);
 	_gridBallIndices.resize(ballCount);
 	_gridSortScratch.resize(ballCount);
-	_gridBallSlots.resize(ballCount);
 	_gridColumnStarts.assign(static_cast<std::size_t>(_gridColumns) + 1, 0);
 	_gridRowStarts.assign(static_cast<std::size_t>(_gridRows) + 1, 0);
 
@@ -623,7 +624,6 @@ void BallCollisionEngine::_buildSpatialGrid() {
 		const std::size_t index = _gridSortScratch[sorted];
 		const std::size_t slot = _gridRowStarts[_gridBallRows[index]]++;
 		_gridBallIndices[slot] = index;
-		_gridBallSlots[index] = slot;
 	}
 
 	for (std::size_t slot = 0; slot < ballCount; ++slot) {
@@ -649,15 +649,6 @@ void BallCollisionEngine::_gatherCellBalls() {
 		cellBall.r = ball.r;
 		cellBall.mass = ball.mass;
 		cellBall.index = static_cast<std::uint32_t>(ballIndex);
-	}
-
-	// Wall contacts come first in the response list. _fakeBalls no longer
-	// grows, so pointers into it stay valid.
-	for (std::size_t contact = 0; contact < _fakeBalls.size(); ++contact) {
-		_collisionList.push_back({
-			&_cellBalls[_gridBallSlots[_lineContactBalls[contact]]],
-			&_fakeBalls[contact]
-		});
 	}
 }
 
@@ -788,50 +779,19 @@ void BallCollisionEngine::_resolveBallPair(
 		second.y -= correction * normalY;
 	}
 
-	_collisionList.push_back({ &first, &second });
-}
+	// Elastic response along the contact normal, applied only to an
+	// approaching pair.
+	++_substepContacts;
+	const float relativeNormalVelocity =
+		normalX * (first.vx - second.vx) + normalY * (first.vy - second.vy);
+	const float combinedMass = first.mass + second.mass;
+	if (relativeNormalVelocity >= 0.0f || combinedMass <= 0.0f)
+		return;
 
-std::uint64_t BallCollisionEngine::_dynamicCollision() {
-	constexpr float DistanceEpsilon = 1.0e-6f;
-	std::uint64_t impulsesApplied = 0;
-
-	for (auto c : _collisionList)
-	{
-		CellBall* b1 = c.first;
-		CellBall* b2 = c.second;
-
-		// Distance between balls
-		float diff_x = b1->x - b2->x;
-		float diff_y = b1->y - b2->y;
-
-		float distanceSquared = diff_x * diff_x + diff_y * diff_y;
-		if (distanceSquared <= DistanceEpsilon)
-			continue;
-
-		float fDistance = std::sqrt(distanceSquared);
-
-		// Normal
-		float nx = diff_x / fDistance;
-		float ny = diff_y / fDistance;
-
-		float relativeNormalVelocity =
-			nx * (b1->vx - b2->vx) + ny * (b1->vy - b2->vy);
-		if (relativeNormalVelocity >= 0.0f)
-			continue;
-
-		float combinedMass = b1->mass + b2->mass;
-		if (combinedMass <= 0.0f)
-			continue;
-
-		float p = 2.0f * relativeNormalVelocity / combinedMass;
-		b1->vx = b1->vx - p * b2->mass * nx;
-		b1->vy = b1->vy - p * b2->mass * ny;
-		b2->vx = b2->vx + p * b1->mass * nx;
-		b2->vy = b2->vy + p * b1->mass * ny;
-		++impulsesApplied;
-	}
-	_collisionList.clear();
-	_fakeBalls.clear();
-	_lineContactBalls.clear();
-	return impulsesApplied;
+	const float p = 2.0f * relativeNormalVelocity / combinedMass;
+	first.vx -= p * second.mass * normalX;
+	first.vy -= p * second.mass * normalY;
+	second.vx += p * first.mass * normalX;
+	second.vy += p * first.mass * normalY;
+	++_substepImpulses;
 }

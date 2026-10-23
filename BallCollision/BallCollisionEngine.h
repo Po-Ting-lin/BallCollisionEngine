@@ -63,14 +63,9 @@ private:
 	};
 
 	std::vector<CellBall> _cellBalls;
-	std::vector<std::size_t> _gridBallSlots; // Balls index -> _cellBalls index
-	// Wall contacts: the stand-in ball for each contact and the Balls index it
-	// belongs to, kept at matching indices. Vectors keep their capacity across
-	// substeps, and pointers into _fakeBalls are taken only after it stops
-	// growing.
-	std::vector<CellBall> _fakeBalls;
-	std::vector<std::size_t> _lineContactBalls;
-	std::vector<std::pair<CellBall*, CellBall*>> _collisionList;
+	// Contacts found and impulses applied in the current substep, for metrics.
+	std::uint64_t _substepContacts;
+	std::uint64_t _substepImpulses;
 	std::vector<std::size_t> _gridCellCounts;
 	std::vector<std::size_t> _gridCellOffsets;
 	std::vector<std::size_t> _gridBallCells;
@@ -139,7 +134,6 @@ private:
 	void _scatterCellBalls();
 	std::uint64_t _resolveGridCollisions();
 	void _resolveBallPair(std::size_t firstSlot, std::size_t secondSlot);
-	std::uint64_t _dynamicCollision();
 
 	// Used for both Ball and CellBall.
 	template <typename BallType>
