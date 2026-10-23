@@ -46,6 +46,7 @@ BallCollisionEngine::BallCollisionEngine(
 	_mouseForceRadius = 0.0f;
 	_substepContacts = 0;
 	_substepImpulses = 0;
+	_maximumBallRadiusThisSubstep = 0.5f;
 	_spawnPattern = spawnPattern;
 }
 
@@ -356,13 +357,21 @@ void BallCollisionEngine::_update(float& fElapsedTime, PhysicsMetrics* metrics) 
 }
 
 void BallCollisionEngine::_updatePositionByVelocity(float deltaTime) {
-	if (deltaTime <= 0.0f)
-		return;
-
+	// The grid needs the largest radius; finding it here saves a pass.
+	float maximumRadius = 0.5f;
 	const int ballCount = static_cast<int>(Balls.size());
-#pragma omp parallel for if(ballCount >= 4096)
+
+	if (deltaTime <= 0.0f) {
+		for (const Ball& ball : Balls)
+			maximumRadius = std::max(maximumRadius, ball.r);
+		_maximumBallRadiusThisSubstep = maximumRadius;
+		return;
+	}
+
+#pragma omp parallel for if(ballCount >= 4096) reduction(max:maximumRadius)
 	for (int i = 0; i < ballCount; i++)
 	{
+		maximumRadius = std::max(maximumRadius, Balls[i].r);
 		float dx = 0.0f;
 		float dy = 0.0f;
 
@@ -430,6 +439,7 @@ void BallCollisionEngine::_updatePositionByVelocity(float deltaTime) {
 			Balls[i].vy = 0;
 		}
 	}
+	_maximumBallRadiusThisSubstep = maximumRadius;
 }
 
 void BallCollisionEngine::_resolveBoundaryCollisions() {
@@ -554,11 +564,8 @@ void BallCollisionEngine::_buildSpatialGrid() {
 		return;
 	}
 
-	float maximumRadius = 0.5f;
-	for (const Ball& ball : Balls)
-		maximumRadius = std::max(maximumRadius, ball.r);
-
-	_gridCellSize = std::max(1.0f, maximumRadius * 2.0f);
+	_gridCellSize = std::max(1.0f, _maximumBallRadiusThisSubstep * 2.0f);
+	const float inverseCellSize = 1.0f / _gridCellSize;
 	const int columns = std::max(
 		1,
 		static_cast<int>(std::ceil(_screenWidth / _gridCellSize))
@@ -580,7 +587,8 @@ void BallCollisionEngine::_buildSpatialGrid() {
 		);
 	}
 
-	const std::size_t ballCount = Balls.size();
+	const std::uint32_t ballCount = static_cast<std::uint32_t>(Balls.size());
+	const std::uint32_t gridColumns = static_cast<std::uint32_t>(_gridColumns);
 	_gridBallCells.resize(ballCount);
 	_gridBallRows.resize(ballCount);
 	_gridBallIndices.resize(ballCount);
@@ -588,24 +596,23 @@ void BallCollisionEngine::_buildSpatialGrid() {
 	_gridColumnStarts.assign(static_cast<std::size_t>(_gridColumns) + 1, 0);
 	_gridRowStarts.assign(static_cast<std::size_t>(_gridRows) + 1, 0);
 
-	for (std::size_t index = 0; index < ballCount; ++index) {
+	for (std::uint32_t index = 0; index < ballCount; ++index) {
 		const Ball& ball = Balls[index];
-		int column = std::clamp(
-			static_cast<int>(ball.x / _gridCellSize),
+		const std::uint32_t column = static_cast<std::uint32_t>(std::clamp(
+			static_cast<int>(ball.x * inverseCellSize),
 			0,
 			_gridColumns - 1
-		);
-		int row = std::clamp(
-			static_cast<int>(ball.y / _gridCellSize),
+		));
+		const std::uint32_t row = static_cast<std::uint32_t>(std::clamp(
+			static_cast<int>(ball.y * inverseCellSize),
 			0,
 			_gridRows - 1
-		);
+		));
 
-		_gridBallCells[index] =
-			static_cast<std::size_t>(row) * _gridColumns + column;
-		_gridBallRows[index] = static_cast<std::size_t>(row);
-		++_gridColumnStarts[static_cast<std::size_t>(column) + 1];
-		++_gridRowStarts[static_cast<std::size_t>(row) + 1];
+		_gridBallCells[index] = row * gridColumns + column;
+		_gridBallRows[index] = row;
+		++_gridColumnStarts[column + 1];
+		++_gridRowStarts[row + 1];
 	}
 	for (int column = 0; column < _gridColumns; ++column)
 		_gridColumnStarts[column + 1] += _gridColumnStarts[column];
@@ -615,19 +622,18 @@ void BallCollisionEngine::_buildSpatialGrid() {
 	// Two stable counting-sort passes (column, then row) pack the balls in
 	// row-major cell order, so neighbouring cells are close in memory. Balls
 	// in one cell keep their Balls order.
-	for (std::size_t index = 0; index < ballCount; ++index) {
-		const std::size_t column = _gridBallCells[index]
-			- _gridBallRows[index] * _gridColumns;
+	for (std::uint32_t index = 0; index < ballCount; ++index) {
+		const std::uint32_t column =
+			_gridBallCells[index] - _gridBallRows[index] * gridColumns;
 		_gridSortScratch[_gridColumnStarts[column]++] = index;
 	}
-	for (std::size_t sorted = 0; sorted < ballCount; ++sorted) {
-		const std::size_t index = _gridSortScratch[sorted];
-		const std::size_t slot = _gridRowStarts[_gridBallRows[index]]++;
-		_gridBallIndices[slot] = index;
+	for (std::uint32_t sorted = 0; sorted < ballCount; ++sorted) {
+		const std::uint32_t index = _gridSortScratch[sorted];
+		_gridBallIndices[_gridRowStarts[_gridBallRows[index]]++] = index;
 	}
 
-	for (std::size_t slot = 0; slot < ballCount; ++slot) {
-		const std::size_t cellIndex = _gridBallCells[_gridBallIndices[slot]];
+	for (std::uint32_t slot = 0; slot < ballCount; ++slot) {
+		const std::uint32_t cellIndex = _gridBallCells[_gridBallIndices[slot]];
 		if (_gridCellCounts[cellIndex] == 0) {
 			_activeGridCells.push_back(cellIndex);
 			_gridCellOffsets[cellIndex] = slot;
@@ -672,13 +678,9 @@ std::uint64_t BallCollisionEngine::_resolveGridCollisions() {
 
 	std::uint64_t pairChecks = 0;
 
-	for (std::size_t cellIndex : _activeGridCells) {
-		const int row = static_cast<int>(
-			cellIndex / static_cast<std::size_t>(_gridColumns)
-		);
-		const int column = static_cast<int>(
-			cellIndex % static_cast<std::size_t>(_gridColumns)
-		);
+	for (std::uint32_t cellIndex : _activeGridCells) {
+		const int row = static_cast<int>(cellIndex) / _gridColumns;
+		const int column = static_cast<int>(cellIndex) - row * _gridColumns;
 		const std::size_t cellCount = _gridCellCounts[cellIndex];
 		const std::size_t cellOffset = _gridCellOffsets[cellIndex];
 

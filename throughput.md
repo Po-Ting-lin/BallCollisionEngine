@@ -442,6 +442,7 @@ the other columns are `Physics` averages from `-FrameBenchmark`.
 | Before | 8.565 | 0.557 | 3.284 | 11.546 | 4.490 | 2.059 |
 | 1. Cell-ordered working copy | 7.854 | 0.513 | 3.006 | 10.169 | 4.088 | 2.072 |
 | 2. Impulse fused into pair test | 6.376 | 0.465 | 2.582 | 8.394 | 4.113 | 1.718 |
+| 3. 32-bit grid indices, no radius pass | 6.339 | 0.466 | 2.538 | 8.227 | 4.030 | 1.644 |
 
 Notes per step:
 
@@ -467,6 +468,13 @@ Notes per step:
    bit-identical, but contact counts stay within 1% and no invalid states
    appear. The wall scene does not improve, because testing every ball
    against every wall dominates it.
+3. **Smaller details.** Grid arrays use 32-bit indices instead of `size_t`,
+   cell coordinates multiply by a precomputed inverse cell size instead of
+   dividing, and the largest radius is found during integration (an OpenMP
+   `max` reduction) instead of a separate pass over `Balls` every substep.
+   The gain is small: 1-4% on most scenes and 8% on the small-radius grid case,
+   where the grid build is a larger share. It is kept because no scene is
+   slower.
 
 ## Next Optimization Priorities
 

@@ -66,15 +66,18 @@ private:
 	// Contacts found and impulses applied in the current substep, for metrics.
 	std::uint64_t _substepContacts;
 	std::uint64_t _substepImpulses;
-	std::vector<std::size_t> _gridCellCounts;
-	std::vector<std::size_t> _gridCellOffsets;
-	std::vector<std::size_t> _gridBallCells;
-	std::vector<std::size_t> _gridBallRows;
-	std::vector<std::size_t> _gridSortScratch;
-	std::vector<std::size_t> _gridColumnStarts;
-	std::vector<std::size_t> _gridRowStarts;
-	std::vector<std::size_t> _gridBallIndices;
-	std::vector<std::size_t> _activeGridCells;
+	// 32-bit grid indices halve the memory traffic of the grid arrays.
+	std::vector<std::uint32_t> _gridCellCounts;
+	std::vector<std::uint32_t> _gridCellOffsets;
+	std::vector<std::uint32_t> _gridBallCells;
+	std::vector<std::uint32_t> _gridBallRows;
+	std::vector<std::uint32_t> _gridSortScratch;
+	std::vector<std::uint32_t> _gridColumnStarts;
+	std::vector<std::uint32_t> _gridRowStarts;
+	std::vector<std::uint32_t> _gridBallIndices;
+	std::vector<std::uint32_t> _activeGridCells;
+	// Largest ball radius, found during integration every substep.
+	float _maximumBallRadiusThisSubstep;
 	int _ballNum;
 	int _screenWidth;
 	int _screenHeight;
