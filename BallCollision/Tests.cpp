@@ -603,6 +603,41 @@ namespace {
 			&& require(engine.Lines.empty(), "ClearLines should remove all");
 	}
 
+	bool testBallsBounceOffWalls() {
+		BallCollisionEngine engine(
+			400, 400, 0, 2, 2, Gravity::None, 0.0f, 0.0f
+		);
+		engine.AddLine(200.0f, 100.0f, 200.0f, 300.0f, 4.0f);
+		// several simultaneous contacts exercise the fake-ball storage
+		for (int index = 0; index < 16; ++index) {
+			engine.Balls.push_back(makeBall(
+				index,
+				194.5f,
+				110.0f + index * 10.0f,
+				2.0f,
+				50.0f
+			));
+		}
+
+		float elapsedTime = 1.0f / 60.0f;
+		engine.Update(elapsedTime);
+
+		bool allBounced = true;
+		bool allClear = true;
+		for (const Ball& ball : engine.Balls) {
+			allBounced = allBounced && std::isfinite(ball.vx) && ball.vx < 0.0f;
+			allClear = allClear && ball.x + ball.r <= 196.0f + 1.0e-3f;
+		}
+
+		return require(
+			allBounced,
+			"balls moving into a wall should be reflected away from it"
+		) && require(
+			allClear,
+			"wall contact should push balls out of the wall"
+		);
+	}
+
 	bool testResetRespawnsConfiguredBalls() {
 		BallCollisionEngine engine(400, 400, 25);
 		engine.Create();
@@ -638,6 +673,7 @@ int main() {
 	passed = testGravityCyclesInConfiguredOrder() && passed;
 	passed = testMouseForcePullsAndPushes() && passed;
 	passed = testLinesCanBeAddedAndRemoved() && passed;
+	passed = testBallsBounceOffWalls() && passed;
 	passed = testResetRespawnsConfiguredBalls() && passed;
 
 	if (!passed)

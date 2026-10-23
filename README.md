@@ -78,11 +78,12 @@ Run the full-frame benchmark of the real application, including GPU rendering:
 ```
 
 This builds Release and runs `BallCollision.exe --frame-benchmark
-build\frame_benchmark.csv`. The app opens its normal window and plays four
+build\frame_benchmark.csv`. The app opens its normal window and plays five
 fixed scenes back to back (2,000 / 8,000 / 20,000 random balls with center
-gravity, then the `config.ini` scene) with a fixed 1/60 s simulation step and
-input disabled. It prints a Markdown table per scene to the console, writes one
-CSV row per scene, and exits by itself. The executable can also be run
+gravity, 8,000 balls inside eight walls, then the `config.ini` scene) with a
+fixed 1/60 s simulation step and input disabled. It prints a Markdown table per
+scene to the console, including heap allocations per frame, writes one CSV row
+per scene, and exits by itself. The executable can also be run
 directly: `BallCollision.exe --frame-benchmark [output.csv]`.
 
 Build and run the automated physics tests:

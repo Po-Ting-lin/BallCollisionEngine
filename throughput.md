@@ -346,7 +346,9 @@ real application, window and OpenGL renderer included:
   in one 1920x1080 full-screen window. The engine is recreated for each scene,
   and `srand` is seeded per scene, so the random layouts repeat.
 - Scenes: 2,000, 8,000, and 20,000 balls with radii 2-3, `random` pattern,
-  `center` gravity (strength 1.2, drag 0.8); then the scene from `config.ini`.
+  `center` gravity (strength 1.2, drag 0.8); the 8,000-ball scene again inside
+  an octagon of eight walls, which exercises the wall-collision path; then the
+  scene from `config.ini`.
 - Each scene runs 60 warm-up frames, then 600 measured frames.
 - The simulation always advances by 1/60 s per frame, independent of the real
   frame time, so every run simulates the same states.
@@ -361,6 +363,10 @@ real application, window and OpenGL renderer included:
   - `Present+`: the frame time left after the four phases above (buffer swap,
     window events, and pixel-engine overhead).
   - `Frame`: the pixel engine's `fElapsedTime` for that frame.
+  - Heap allocations: global `operator new` calls during the frame. The
+    counting `operator new` is in `BallCollision/AllocationCounter.cpp` and is
+    linked only into `BallCollision.exe`. Allocations made by the OpenGL driver
+    or Win32 are not counted.
 - For each phase it reports average, median, P95, P99 (nearest rank), and
   maximum, plus average FPS (1 / average frame time).
 
@@ -376,23 +382,49 @@ WinLibs MinGW-w64 GCC 16.2.0 UCRT, Release, statically linked runtime.
 `config.ini` at the time: 8,000 balls, radii 2-3, `rectangle_cluster`,
 gravity `none`, drag 0.6.
 
-| Scene | Balls | Avg FPS | Frame avg ms | Frame p99 ms | Physics avg ms | Balls avg ms | UI avg ms | Render (GPU) avg ms | Render p99 ms | Present+ avg ms |
-|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| random 2k center | 2,000 | 1144.5 | 0.874 | 1.197 | 0.559 | 0.060 | 0.054 | 0.167 | 0.302 | 0.033 |
-| random 8k center | 8,000 | 252.9 | 3.954 | 5.229 | 3.275 | 0.245 | 0.058 | 0.355 | 0.494 | 0.021 |
-| random 20k center | 20,000 | 71.0 | 14.084 | 17.186 | 11.417 | 0.663 | 0.073 | 1.873 | 2.278 | 0.058 |
-| config.ini | 8,000 | 329.6 | 3.034 | 5.205 | 1.968 | 0.242 | 0.052 | 0.745 | 2.593 | 0.028 |
+| Scene | Balls | Avg FPS | Frame avg ms | Frame p99 ms | Physics avg ms | Balls avg ms | UI avg ms | Render (GPU) avg ms | Render p99 ms | Present+ avg ms | Allocs/frame avg | Allocs/frame max |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| random 2k center | 2,000 | 1104.2 | 0.906 | 1.182 | 0.549 | 0.095 | 0.058 | 0.171 | 0.272 | 0.033 | 0.000 | 0 |
+| random 8k center | 8,000 | 236.7 | 4.225 | 6.186 | 3.310 | 0.397 | 0.062 | 0.434 | 1.141 | 0.022 | 0.005 | 1 |
+| random 20k center | 20,000 | 69.5 | 14.385 | 17.241 | 11.602 | 0.832 | 0.067 | 1.857 | 2.144 | 0.028 | 0.015 | 1 |
+| random 8k center walls | 8,000 | 160.6 | 6.226 | 7.482 | 4.539 | 0.401 | 0.063 | 1.199 | 1.847 | 0.023 | 0.013 | 2 |
+| config.ini | 8,000 | 251.5 | 3.976 | 5.671 | 2.147 | 0.358 | 0.057 | 1.391 | 3.119 | 0.023 | 0.005 | 1 |
 
-Two later runs of the same build were up to 15% slower in the first three
-scenes. The `config.ini` scene varied more: 244 and 220 FPS, and in one run
-`Render (GPU)` averaged 1.45 ms.
+Repeated runs of the same build varied by up to 15%. The `config.ini` scene
+varied most, between about 220 and 330 FPS, mostly in `Render (GPU)`.
+
+### Per-Frame Heap Allocations
+
+The first version of the frame loop allocated on the heap every frame:
+
+| Source | Allocations per frame | Fix |
+|:---|---:|:---|
+| HUD text: `std::ostringstream` and string concatenations longer than the small-string buffer | 7 | `snprintf` into a stack buffer, assigned into one reused `std::string` |
+| Wall contacts: `_fakeBalls` was a `std::deque`, which frees and reallocates blocks every substep | about 90 with 8 walls | `std::vector` storage that keeps its capacity; pointers to the stand-in balls are taken after the wall pass, when the vector no longer grows |
+| `_lineVertices` had no reserve, and walls could grow `_quadVertices` past its ball-only reserve | only while growing | reserve both up front, with headroom for walls |
+| HUD texture: `Decal::Update()` calls `glTexImage2D` every frame, which can make the driver reallocate the texture (not counted above) | GPU side | `glTexSubImage2D` into the existing texture |
+
+| Scene | Allocs/frame before | Allocs/frame after |
+|:---|---:|---:|
+| random 2k center | 7.000 | 0.000 |
+| random 8k center | 7.005 | 0.005 |
+| random 20k center | 7.015 | 0.015 |
+| random 8k center walls | 97.347 (max 137) | 0.013 (max 2) |
+| config.ini | 6.005 | 0.005 |
+
+The remaining single allocation, about once per second, is the pixel engine
+building its window-title string for the FPS counter. The rare 2 in the wall
+scene is a contact vector growing past its previous peak, which stops once
+the peak contact count is reached.
 
 Observations:
 
-- Physics dominates every scene: 64-83% of the frame. At 20,000 balls it alone
-  takes 11.4 ms, so the frame budget is set by the CPU solver, not rendering.
+- Physics dominates every scene: 54-81% of the frame. At 20,000 balls it alone
+  takes 11.6 ms, so the frame budget is set by the CPU solver, not rendering.
+- Eight walls cost about 1.2 ms of physics at 8,000 balls, because every ball
+  is tested against every wall with no spatial culling.
 - GPU rendering stays under 2 ms even at 20,000 balls. Building the vertex
-  array costs about 0.033 us per ball.
+  array costs about 0.04 us per ball.
 - `Present+` is under 0.1 ms on average once GPU time is separated. In the
   interactive HUD, `Present+` also includes this GPU time.
 - The 20,000-ball scene holds 60 FPS on average, but its P99 frame time

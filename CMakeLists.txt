@@ -17,6 +17,8 @@ configure_file(
 
 add_executable(BallCollision
     BallCollision/Source.cpp
+    BallCollision/AllocationCounter.cpp
+    BallCollision/AllocationCounter.h
     BallCollision/AppConfig.cpp
     BallCollision/AppConfig.h
     BallCollision/Gravity.h

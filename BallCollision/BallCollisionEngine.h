@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include <cmath>
-#include <deque>
 #include <vector>
 #include <omp.h>
 #include "Gravity.h"
@@ -52,7 +51,12 @@ public:
 	std::vector<Ball> Balls;
 	std::vector<Line> Lines;
 private:
-	std::deque<Ball> _fakeBalls;
+	// Wall contacts: the stand-in ball for each contact and the real ball it
+	// belongs to, kept at matching indices. Vectors keep their capacity across
+	// substeps, and pointers into _fakeBalls are taken only after it stops
+	// growing.
+	std::vector<Ball> _fakeBalls;
+	std::vector<Ball*> _lineContactBalls;
 	std::vector<std::pair<Ball*, Ball*>> _collisionList;
 	std::vector<std::size_t> _gridCellCounts;
 	std::vector<std::size_t> _gridCellOffsets;

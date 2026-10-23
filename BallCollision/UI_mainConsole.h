@@ -1,11 +1,13 @@
 #pragma once
 #define OLC_PGE_APPLICATION
 #include "olcPixelGameEngine.h"
+#include "AllocationCounter.h"
 #include "AppConfig.h"
 #include "BallCollisionEngine.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -72,10 +74,16 @@ private:
 	bool _hasLastFramePhases;
 	bool _hasSmoothedFramePhases;
 
-	inline std::string _formatMilliseconds(double seconds) const {
-		std::ostringstream text;
-		text << std::fixed << std::setprecision(3) << seconds * 1000.0;
-		return text.str();
+	// Reused for every HUD line; assign() keeps the capacity reserved in
+	// OnUserCreate, so formatting does not touch the heap.
+	std::string _hudText;
+
+	template <typename... Args>
+	inline const std::string& _formatHud(const char* format, Args... args) {
+		char buffer[64];
+		std::snprintf(buffer, sizeof(buffer), format, args...);
+		_hudText.assign(buffer);
+		return _hudText;
 	}
 
 	inline const char* _gravityName() const {
@@ -170,6 +178,7 @@ private:
 		Gravity gravity;
 		float gravityStrength;
 		float velocityDrag;
+		bool addWalls = false;
 	};
 
 	struct FrameSample {
@@ -179,6 +188,7 @@ private:
 		double renderSeconds = 0.0;
 		double presentationSeconds = 0.0;
 		double frameSeconds = 0.0;
+		std::uint64_t allocations = 0;
 	};
 
 	struct PhaseStatistics {
@@ -194,6 +204,7 @@ private:
 		std::size_t ballCount = 0;
 		double averageFps = 0.0;
 		PhaseStatistics phases[6];
+		PhaseStatistics allocations;
 	};
 
 	static constexpr int BenchmarkWarmupFrames = 60;
@@ -214,6 +225,7 @@ private:
 	bool _hasPendingBenchmarkSample = false;
 	FrameSample _pendingBenchmarkSample;
 	double _lastRenderSeconds = 0.0;
+	std::uint64_t _frameStartAllocationCount = 0;
 
 	inline void _createEngine(
 		int numBalls,
@@ -241,9 +253,18 @@ private:
 		_selectedLine = nullptr;
 		_isDrawingWall = false;
 
-		const std::size_t expectedQuadVertices =
-			static_cast<std::size_t>(numBalls + 1) * 4;
-		_quadVertices.reserve(expectedQuadVertices);
+		_reserveVertices(numBalls);
+	}
+
+	// clear() keeps capacity, so reserving once keeps the per-frame geometry
+	// build off the heap. Walls take 12 quad vertices each and come out of the
+	// headroom.
+	inline void _reserveVertices(int numBalls) {
+		constexpr std::size_t WallVertexHeadroom = 4'096;
+		_quadVertices.reserve(
+			static_cast<std::size_t>(numBalls + 1) * 4 + WallVertexHeadroom
+		);
+		_lineVertices.reserve(MouseForceSegments * 2 + 64);
 	}
 
 	inline static const char* _spawnPatternName(SpawnPattern pattern) {
@@ -270,8 +291,28 @@ private:
 			scene.velocityDrag,
 			scene.spawnPattern
 		);
+		if (scene.addWalls) {
+			// an octagon of walls around the gravity centre
+			constexpr int WallCount = 8;
+			constexpr float TwoPi = 6.28318530718f;
+			const float centerX = ScreenWidth() * 0.5f;
+			const float centerY = ScreenHeight() * 0.5f;
+			const float wallDistance = ScreenHeight() * 0.3f;
+			for (int wall = 0; wall < WallCount; ++wall) {
+				const float a0 = TwoPi * wall / WallCount;
+				const float a1 = TwoPi * (wall + 1) / WallCount;
+				_engine->AddLine(
+					centerX + wallDistance * std::cos(a0),
+					centerY + wallDistance * std::sin(a0),
+					centerX + wallDistance * std::cos(a1),
+					centerY + wallDistance * std::sin(a1),
+					_config.wallRadius
+				);
+			}
+		}
 		_benchmarkFrame = 0;
 		_benchmarkSamples.clear();
+		_benchmarkSamples.reserve(BenchmarkMeasuredFrames);
 		_hasPendingBenchmarkSample = false;
 	}
 
@@ -322,6 +363,9 @@ private:
 			}
 			result.phases[phase] = _computeStatistics(values);
 		}
+		for (std::size_t index = 0; index < _benchmarkSamples.size(); ++index)
+			values[index] = static_cast<double>(_benchmarkSamples[index].allocations);
+		result.allocations = _computeStatistics(values);
 		result.averageFps = result.phases[5].average > 0.0
 			? 1000.0 / result.phases[5].average
 			: 0.0;
@@ -344,7 +388,10 @@ private:
 				<< " | " << statistics.p99
 				<< " | " << statistics.maximum << " |\n";
 		}
-		std::cout << "\nAverage FPS: " << result.averageFps << "\n" << std::flush;
+		std::cout << "\nAverage FPS: " << result.averageFps
+			<< "\nHeap allocations per frame: avg " << result.allocations.average
+			<< ", p99 " << result.allocations.p99
+			<< ", max " << result.allocations.maximum << "\n" << std::flush;
 
 		if (!_config.frameBenchmarkOutput.empty())
 			_appendBenchmarkCsv(result);
@@ -373,7 +420,7 @@ private:
 					<< ',' << column << "_p99_ms"
 					<< ',' << column << "_max_ms";
 			}
-			output << '\n';
+			output << ",allocs_avg,allocs_p99,allocs_max\n";
 		}
 
 		output << std::fixed << std::setprecision(4)
@@ -388,7 +435,9 @@ private:
 				<< ',' << statistics.p99
 				<< ',' << statistics.maximum;
 		}
-		output << '\n';
+		output << ',' << result.allocations.average
+			<< ',' << result.allocations.p99
+			<< ',' << result.allocations.maximum << '\n';
 	}
 
 	inline void _printBenchmarkSummary() const {
@@ -396,8 +445,9 @@ private:
 			<< "\n## Frame benchmark summary\n\n"
 			<< "| Scene | Balls | Avg FPS | Frame avg ms | Frame p99 ms"
 			<< " | Physics avg ms | Balls avg ms | UI avg ms"
-			<< " | Render (GPU) avg ms | Render p99 ms | Present+ avg ms |\n"
-			<< "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+			<< " | Render (GPU) avg ms | Render p99 ms | Present+ avg ms"
+			<< " | Allocs/frame avg | Allocs/frame max |\n"
+			<< "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 		for (const SceneResult& result : _benchmarkResults) {
 			std::cout << "| " << result.name
 				<< " | " << result.ballCount
@@ -409,7 +459,9 @@ private:
 				<< " | " << result.phases[2].average
 				<< " | " << result.phases[3].average
 				<< " | " << result.phases[3].p99
-				<< " | " << result.phases[4].average << " |\n";
+				<< " | " << result.phases[4].average
+				<< " | " << result.allocations.average
+				<< " | " << result.allocations.maximum << " |\n";
 		}
 		std::cout << std::flush;
 	}
@@ -418,10 +470,16 @@ private:
 	// previous frame, so the previous frame's sample is completed here.
 	// Returns false once the last scene has been reported.
 	inline bool _advanceFrameBenchmark(float elapsedTime) {
+		const std::uint64_t allocationCount = AllocationCount();
+		const std::uint64_t frameAllocations =
+			allocationCount - _frameStartAllocationCount;
+		_frameStartAllocationCount = allocationCount;
+
 		if (_hasPendingBenchmarkSample) {
 			FrameSample& sample = _pendingBenchmarkSample;
 			sample.renderSeconds = _lastRenderSeconds;
 			sample.frameSeconds = elapsedTime;
+			sample.allocations = frameAllocations;
 			sample.presentationSeconds = std::max(
 				0.0,
 				static_cast<double>(elapsedTime)
@@ -730,18 +788,39 @@ private:
 		}
 	}
 
-	inline std::string _speedText() const {
+	inline const std::string& _formatSpeedText() {
 		if (_config.frameBenchmark) {
-			return "BENCH " + std::to_string(_benchmarkSceneIndex + 1)
-				+ "/" + std::to_string(_benchmarkScenes.size());
+			return _formatHud(
+				"Speed:     BENCH %d/%d",
+				static_cast<int>(_benchmarkSceneIndex + 1),
+				static_cast<int>(_benchmarkScenes.size())
+			);
 		}
 		if (_isPaused)
-			return "PAUSED";
-		std::ostringstream text;
-		text << std::fixed << std::setprecision(
-			_timeScale < 0.25f ? 4 : 2
-		) << _timeScale << "x";
-		return text.str();
+			return _formatHud("Speed:     %s", "PAUSED");
+		return _formatHud(
+			"Speed:     %.*fx",
+			_timeScale < 0.25f ? 4 : 2,
+			static_cast<double>(_timeScale)
+		);
+	}
+
+	// Decal::Update() re-specifies the texture with glTexImage2D, which can
+	// make the driver reallocate its storage every frame. The decal already
+	// owns a texture of the right size, so only its pixels are replaced.
+	inline void _uploadHudTexture() {
+		glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(_hudDecal->id));
+		glTexSubImage2D(
+			GL_TEXTURE_2D,
+			0,
+			0,
+			0,
+			_hudSprite->width,
+			_hudSprite->height,
+			GL_RGBA,
+			GL_UNSIGNED_BYTE,
+			_hudSprite->GetData()
+		);
 	}
 
 public:
@@ -752,6 +831,7 @@ public:
 				{ "random 2k center", 2'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
 				{ "random 8k center", 8'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
 				{ "random 20k center", 20'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f },
+				{ "random 8k center walls", 8'000, 2, 3, SpawnPattern::Random, Gravity::Center, 1.2f, 0.8f, true },
 				{
 					"config.ini",
 					_config.numBalls,
@@ -772,6 +852,10 @@ public:
 				glGetString(GL_RENDERER))) {
 				std::cout << "GL renderer: " << glRenderer << "\n";
 			}
+			int largestScene = 0;
+			for (const FrameBenchmarkScene& scene : _benchmarkScenes)
+				largestScene = std::max(largestScene, scene.numBalls);
+			_reserveVertices(largestScene);
 			_startBenchmarkScene();
 		}
 		else {
@@ -787,6 +871,7 @@ public:
 		}
 		_createCircleTexture();
 
+		_hudText.reserve(64);
 		_hudSprite = std::make_unique<olc::Sprite>(250, 114);
 		_hudDecal = std::make_unique<olc::Decal>(_hudSprite.get());
 
@@ -924,57 +1009,56 @@ public:
 		const int framesPerSecond = _smoothedFrameSeconds > 0.0f
 			? static_cast<int>(1.0f / _smoothedFrameSeconds + 0.5f)
 			: 0;
-		const std::string fpsText = "FPS: " + std::to_string(framesPerSecond);
+		// HUD text goes through one reused string so the frame does not allocate
 		SetDrawTarget(_hudSprite.get());
 		Clear(olc::VERY_DARK_GREY);
-		DrawString(4, 4, fpsText, olc::YELLOW, 2);
+		DrawString(4, 4, _formatHud("FPS: %d", framesPerSecond), olc::YELLOW, 2);
 		DrawString(
 			4,
 			26,
-			"Frame:     "
-				+ _formatMilliseconds(_smoothedFrameSeconds) + " ms"
+			_formatHud("Frame:     %.3f ms", _smoothedFrameSeconds * 1000.0)
 		);
 		DrawString(
 			4,
 			38,
-			"Physics:   "
-				+ _formatMilliseconds(
-					_smoothedFramePhases.physicsSeconds
-				) + " ms"
+			_formatHud(
+				"Physics:   %.3f ms",
+				_smoothedFramePhases.physicsSeconds * 1000.0
+			)
 		);
 		DrawString(
 			4,
 			50,
-			"Balls:     "
-				+ _formatMilliseconds(
-					_smoothedFramePhases.ballDrawingSeconds
-				) + " ms"
+			_formatHud(
+				"Balls:     %.3f ms",
+				_smoothedFramePhases.ballDrawingSeconds * 1000.0
+			)
 		);
 		DrawString(
 			4,
 			62,
-			"UI:        "
-				+ _formatMilliseconds(
-					_smoothedFramePhases.uiDrawingSeconds
-				) + " ms"
+			_formatHud(
+				"UI:        %.3f ms",
+				_smoothedFramePhases.uiDrawingSeconds * 1000.0
+			)
 		);
 		DrawString(
 			4,
 			74,
-			"Present+:  "
-				+ _formatMilliseconds(
-					_smoothedFramePhases.presentationSeconds
-				) + " ms"
+			_formatHud(
+				"Present+:  %.3f ms",
+				_smoothedFramePhases.presentationSeconds * 1000.0
+			)
 		);
-		DrawString(4, 86, "Gravity:   " + std::string(_gravityName()));
+		DrawString(4, 86, _formatHud("Gravity:   %s", _gravityName()));
 		DrawString(
 			4,
 			98,
-			"Speed:     " + _speedText(),
+			_formatSpeedText(),
 			_isPaused ? olc::YELLOW : olc::WHITE
 		);
 		SetDrawTarget(nullptr);
-		_hudDecal->Update();
+		_uploadHudTexture();
 
 		currentFramePhases.uiDrawingSeconds =
 			std::chrono::duration<double>(Clock::now() - phaseStart).count();

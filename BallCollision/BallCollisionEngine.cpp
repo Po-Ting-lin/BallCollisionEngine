@@ -51,6 +51,7 @@ BallCollisionEngine::~BallCollisionEngine() {
 	Balls.clear();
 	Lines.clear();
 	_fakeBalls.clear();
+	_lineContactBalls.clear();
 	_collisionList.clear();
 	_gridCellCounts.clear();
 	_gridCellOffsets.clear();
@@ -563,8 +564,7 @@ void BallCollisionEngine::_resolveLineCollisions() {
 				fakeball.vx = -ball.vx;
 				fakeball.vy = -ball.vy;
 				_fakeBalls.push_back(fakeball);
-
-				_collisionList.push_back({ &ball, &_fakeBalls.back() });
+				_lineContactBalls.push_back(&ball);
 
 				float penetration = combinedRadius - distance;
 				ball.x += penetration * normalX;
@@ -572,6 +572,10 @@ void BallCollisionEngine::_resolveLineCollisions() {
 			}
 		}
 	}
+
+	// _fakeBalls no longer grows, so pointers into it stay valid
+	for (std::size_t contact = 0; contact < _fakeBalls.size(); ++contact)
+		_collisionList.push_back({ _lineContactBalls[contact], &_fakeBalls[contact] });
 }
 
 void BallCollisionEngine::_buildSpatialGrid() {
@@ -816,5 +820,6 @@ std::uint64_t BallCollisionEngine::_dynamicCollision() {
 	}
 	_collisionList.clear();
 	_fakeBalls.clear();
+	_lineContactBalls.clear();
 	return impulsesApplied;
 }
