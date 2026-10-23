@@ -555,6 +555,68 @@ namespace {
 			"gravity should cycle none, normal, center, bicenter, none"
 		);
 	}
+
+	bool testMouseForcePullsAndPushes() {
+		BallCollisionEngine engine(
+			400, 400, 0, 2, 2, Gravity::None, 0.0f, 0.0f
+		);
+		engine.Balls.push_back(makeBall(0, 150.0f, 200.0f, 2.0f));
+		engine.Balls.push_back(makeBall(1, 300.0f, 200.0f, 2.0f));
+		engine.SetMouseForce(200.0f, 200.0f, 1000.0f, 100.0f);
+
+		float elapsedTime = 0.02f;
+		engine.Update(elapsedTime);
+		const bool pulled = engine.Balls[0].vx > 0.0f;
+		const bool outsideUntouched = engine.Balls[1].vx == 0.0f;
+
+		engine.Balls[0] = makeBall(0, 150.0f, 200.0f, 2.0f);
+		engine.SetMouseForce(200.0f, 200.0f, -1000.0f, 100.0f);
+		engine.Update(elapsedTime);
+		const bool pushed = engine.Balls[0].vx < 0.0f;
+
+		engine.Balls[0] = makeBall(0, 150.0f, 200.0f, 2.0f);
+		engine.ClearMouseForce();
+		engine.Update(elapsedTime);
+		const bool cleared = engine.Balls[0].vx == 0.0f;
+
+		return require(pulled, "positive mouse force should pull balls")
+			&& require(pushed, "negative mouse force should push balls")
+			&& require(
+				outsideUntouched,
+				"mouse force should not affect balls outside its radius"
+			)
+			&& require(cleared, "cleared mouse force should do nothing");
+	}
+
+	bool testLinesCanBeAddedAndRemoved() {
+		BallCollisionEngine engine(400, 400, 0);
+		engine.AddLine(100.0f, 100.0f, 300.0f, 100.0f, 4.0f);
+		engine.AddLine(100.0f, 300.0f, 300.0f, 300.0f, 4.0f);
+
+		const bool missIgnored = !engine.RemoveLineAt(200.0f, 200.0f, 4.0f)
+			&& engine.Lines.size() == 2;
+		const bool hitRemoved = engine.RemoveLineAt(200.0f, 305.0f, 4.0f)
+			&& engine.Lines.size() == 1
+			&& engine.Lines[0].sy == 100.0f;
+		engine.ClearLines();
+
+		return require(missIgnored, "removing away from a line should miss")
+			&& require(hitRemoved, "removing near a line should erase it")
+			&& require(engine.Lines.empty(), "ClearLines should remove all");
+	}
+
+	bool testResetRespawnsConfiguredBalls() {
+		BallCollisionEngine engine(400, 400, 25);
+		engine.Create();
+		engine.Balls.pop_back();
+		engine.AddLine(10.0f, 10.0f, 50.0f, 10.0f, 4.0f);
+		engine.Reset();
+
+		return require(
+			engine.Balls.size() == 25,
+			"Reset should respawn the configured ball count"
+		) && require(engine.Lines.size() == 1, "Reset should keep walls");
+	}
 }
 
 int main() {
@@ -576,6 +638,9 @@ int main() {
 	passed = testCollisionCorrectionCannotPushBallOutsideBoundary() && passed;
 	passed = testGravityStrengthControlsAcceleration() && passed;
 	passed = testGravityCyclesInConfiguredOrder() && passed;
+	passed = testMouseForcePullsAndPushes() && passed;
+	passed = testLinesCanBeAddedAndRemoved() && passed;
+	passed = testResetRespawnsConfiguredBalls() && passed;
 
 	if (!passed)
 		return EXIT_FAILURE;

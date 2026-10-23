@@ -93,6 +93,9 @@ gravity = none
 gravity_strength = 1.2
 velocity_drag = 0.8
 num_balls = 3000
+mouse_force_strength = 4000.0
+mouse_force_radius = 200.0
+wall_radius = 4.0
 ```
 
 Radius bounds are inclusive. Set `ball_radius_min` and `ball_radius_max` to the
@@ -107,6 +110,9 @@ case-insensitive and selects the initial mode. `gravity_strength` scales the
 acceleration of the other three modes; `0` disables their gravitational force,
 while `1.2` preserves the original behavior. `velocity_drag` controls velocity
 damping independently of gravity. Set it to `0` for space-like coasting.
+`mouse_force_strength` is the `Q` / `E` acceleration at the cursor, fading to
+zero at `mouse_force_radius` pixels. `wall_radius` sets the thickness of drawn
+walls.
 
 The build copies the configuration file beside the executable. Running through
 `.\build.ps1 -Run` reads the root copy shown above.
@@ -144,6 +150,12 @@ OpenMP configuration, and Linux dependencies.
 - Hold the left mouse button on a ball to drag it.
 - Press and release the right mouse button on a ball to launch it away from the
   mouse cursor.
+- Right-drag on empty space to draw a wall. Middle-click a wall to delete it,
+  or press `C` to clear every wall. Left-drag a wall end to move it.
+- Hold `Q` to pull nearby balls toward the cursor, or `E` to push them away.
+- Press `P` or `Space` to pause, `-` / `=` to halve or double the simulation
+  speed (1/16x to 2x), and `0` to return to 1x.
+- Press `R` to respawn the balls. Walls are kept.
 
 ## Third-Party Component
 

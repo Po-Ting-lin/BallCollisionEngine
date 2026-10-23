@@ -13,6 +13,9 @@ struct AppConfig {
 	Gravity gravity = Gravity::None;
 	float gravityStrength = 1.2f;
 	float velocityDrag = 0.8f;
+	float mouseForceStrength = 4000.0f;
+	float mouseForceRadius = 200.0f;
+	float wallRadius = 4.0f;
 	SpawnPattern spawnPattern = SpawnPattern::Random;
 };
 

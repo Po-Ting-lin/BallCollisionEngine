@@ -42,6 +42,12 @@ public:
 	void Update(float& fElapsedTime, PhysicsMetrics& metrics);
 	void CycleGravity();
 	Gravity GetGravity() const;
+	void Reset();
+	void AddLine(float sx, float sy, float ex, float ey, float radius);
+	bool RemoveLineAt(float x, float y, float tolerance);
+	void ClearLines();
+	void SetMouseForce(float x, float y, float strength, float radius);
+	void ClearMouseForce();
 
 	std::vector<Ball> Balls;
 	std::vector<Line> Lines;
@@ -66,6 +72,10 @@ private:
 	float _gridCellSize;
 	float _gravityStrength;
 	float _velocityDrag;
+	float _mouseForceX;
+	float _mouseForceY;
+	float _mouseForceStrength;
+	float _mouseForceRadius;
 	Gravity _gravity;
 	SpawnPattern _spawnPattern;
 

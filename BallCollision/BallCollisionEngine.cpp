@@ -40,6 +40,10 @@ BallCollisionEngine::BallCollisionEngine(
 	_gravity = gravity;
 	_gravityStrength = gravityStrength;
 	_velocityDrag = velocityDrag;
+	_mouseForceX = 0.0f;
+	_mouseForceY = 0.0f;
+	_mouseForceStrength = 0.0f;
+	_mouseForceRadius = 0.0f;
 	_spawnPattern = spawnPattern;
 }
 
@@ -244,6 +248,71 @@ Gravity BallCollisionEngine::GetGravity() const {
 	return _gravity;
 }
 
+void BallCollisionEngine::Reset() {
+	Balls.clear();
+	Create();
+}
+
+void BallCollisionEngine::AddLine(
+	float sx,
+	float sy,
+	float ex,
+	float ey,
+	float radius
+) {
+	_addLine(sx, sy, ex, ey, radius);
+}
+
+bool BallCollisionEngine::RemoveLineAt(float x, float y, float tolerance) {
+	constexpr float DistanceEpsilon = 1.0e-6f;
+
+	for (auto line = Lines.begin(); line != Lines.end(); ++line) {
+		float line_vector_x = line->ex - line->sx;
+		float line_vector_y = line->ey - line->sy;
+		float lengthSquared =
+			line_vector_x * line_vector_x + line_vector_y * line_vector_y;
+		float t = lengthSquared > DistanceEpsilon
+			? std::clamp(
+				(line_vector_x * (x - line->sx)
+					+ line_vector_y * (y - line->sy)) / lengthSquared,
+				0.0f,
+				1.0f
+			)
+			: 0.0f;
+		float differenceX = x - (line->sx + t * line_vector_x);
+		float differenceY = y - (line->sy + t * line_vector_y);
+		float reach = line->r + tolerance;
+		if (differenceX * differenceX + differenceY * differenceY
+			<= reach * reach) {
+			Lines.erase(line);
+			return true;
+		}
+	}
+	return false;
+}
+
+void BallCollisionEngine::ClearLines() {
+	Lines.clear();
+}
+
+// Positive strength pulls balls toward (x, y), negative pushes them away.
+// The force fades linearly to zero at the edge of the radius.
+void BallCollisionEngine::SetMouseForce(
+	float x,
+	float y,
+	float strength,
+	float radius
+) {
+	_mouseForceX = x;
+	_mouseForceY = y;
+	_mouseForceStrength = strength;
+	_mouseForceRadius = radius;
+}
+
+void BallCollisionEngine::ClearMouseForce() {
+	_mouseForceStrength = 0.0f;
+}
+
 void BallCollisionEngine::_update(float& fElapsedTime, PhysicsMetrics* metrics) {
 	using Clock = std::chrono::steady_clock;
 
@@ -332,6 +401,23 @@ void BallCollisionEngine::_updatePositionByVelocity(float& fElapsedTime) {
 				-Balls[i].vx * _velocityDrag + _gravityStrength * dx;
 			Balls[i].ay =
 				-Balls[i].vy * _velocityDrag + _gravityStrength * dy;
+
+			if (_mouseForceStrength != 0.0f && _mouseForceRadius > 0.0f) {
+				const float mouseDx = _mouseForceX - Balls[i].x;
+				const float mouseDy = _mouseForceY - Balls[i].y;
+				const float mouseDistanceSquared =
+					mouseDx * mouseDx + mouseDy * mouseDy;
+				if (mouseDistanceSquared < _mouseForceRadius * _mouseForceRadius
+					&& mouseDistanceSquared > 1.0f) {
+					const float mouseDistance = std::sqrt(mouseDistanceSquared);
+					const float falloff =
+						1.0f - mouseDistance / _mouseForceRadius;
+					const float scale =
+						_mouseForceStrength * falloff / mouseDistance;
+					Balls[i].ax += mouseDx * scale;
+					Balls[i].ay += mouseDy * scale;
+				}
+			}
 
 			// Update ball physics
 			Balls[i].vx += Balls[i].ax * Balls[i].remainingTime;
